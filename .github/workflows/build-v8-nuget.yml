@@ -118,24 +118,64 @@ jobs:
           "%V8_DIR%\third_party\ninja\ninja.exe" --version
 
       - name: Generate V8 build files
-        shell: cmd
+        shell: pwsh
         run: |
-          set DEPOT_TOOLS_WIN_TOOLCHAIN=0
-          set GYP_MSVS_VERSION=2022
+          $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
+          $env:GYP_MSVS_VERSION = "2022"
 
-          cd /d "%V8_DIR%"
+          Set-Location $env:V8_DIR
 
-          "%V8_DIR%\buildtools\win\gn.exe" gen out\x64.release --args="is_debug=false target_cpu=""x64"" v8_target_cpu=""x64"" is_component_build=false v8_static_library=true v8_monolithic=true v8_use_external_startup_data=false v8_enable_i18n_support=false treat_warnings_as_errors=false symbol_level=0 use_custom_libcxx=false"
+          $gn = Join-Path $env:V8_DIR "buildtools\win\gn.exe"
+
+          if (-not (Test-Path $gn)) {
+            throw "gn.exe not found: $gn"
+          }
+
+          $buildDir = "out/x64.release"
+
+          $gnArgs = @(
+            "is_debug=false"
+            'target_cpu="x64"'
+            'v8_target_cpu="x64"'
+            "is_component_build=false"
+            "v8_static_library=true"
+            "v8_monolithic=true"
+            "v8_use_external_startup_data=false"
+            "v8_enable_i18n_support=false"
+            "treat_warnings_as_errors=false"
+            "symbol_level=0"
+            "use_custom_libcxx=false"
+          ) -join " "
+
+          Write-Host "GN: $gn"
+          Write-Host "Build dir: $buildDir"
+          Write-Host "Args: $gnArgs"
+
+          & $gn gen $buildDir "--args=$gnArgs"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "gn gen failed with exit code $LASTEXITCODE"
+          }
 
       - name: Build v8_monolith
-        shell: cmd
+        shell: pwsh
         run: |
-          set DEPOT_TOOLS_WIN_TOOLCHAIN=0
-          set GYP_MSVS_VERSION=2022
+          $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
+          $env:GYP_MSVS_VERSION = "2022"
 
-          cd /d "%V8_DIR%"
+          Set-Location $env:V8_DIR
 
-          "%V8_DIR%\third_party\ninja\ninja.exe" -C out\x64.release v8_monolith
+          $ninja = Join-Path $env:V8_DIR "third_party\ninja\ninja.exe"
+
+          if (-not (Test-Path $ninja)) {
+            throw "ninja.exe not found: $ninja"
+          }
+
+          & $ninja -C "out/x64.release" v8_monolith
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "ninja failed with exit code $LASTEXITCODE"
+          }
 
       - name: Prepare NuGet package files
         shell: pwsh
@@ -281,10 +321,39 @@ jobs:
             $zip.Dispose()
           }
 
+          Write-Host "Checking required files..."
+
+          $required = @(
+            "build/native/$env:PACKAGE_ID.props"
+            "build/native/$env:PACKAGE_ID.targets"
+            "build/native/include/v8.h"
+            "build/native/lib/win-x64/v8_monolith.lib"
+          )
+
+          foreach ($item in $required) {
+            $found = $false
+
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($env:NUPKG)
+            try {
+              foreach ($entry in $zip.Entries) {
+                if ($entry.FullName -eq $item) {
+                  $found = $true
+                  break
+                }
+              }
+            } finally {
+              $zip.Dispose()
+            }
+
+            if (-not $found) {
+              throw "Required file missing from NuGet package: $item"
+            }
+          }
+
       - name: Upload NuGet artifact
         uses: actions/upload-artifact@v4
         with:
-          name: X.Script.V8
+          name: X.Script.V8-${{ env.VERSION }}
           path: ${{ env.NUPKG }}
           if-no-files-found: error
 
