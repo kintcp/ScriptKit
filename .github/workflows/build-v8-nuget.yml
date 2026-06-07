@@ -40,6 +40,7 @@ jobs:
       V8_DIR: ${{ github.workspace }}\v8
       OUT_DIR: ${{ github.workspace }}\artifacts\v8-nuget
       WORK_DIR: ${{ github.workspace }}\artifacts\v8-nuget\work
+      GN_ARGS_CACHE_VERSION: v4
 
     steps:
       - name: Checkout project
@@ -68,16 +69,48 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Cache depot_tools
+        id: cache-depot-tools
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.DEPOT_TOOLS_DIR }}
+          key: depot-tools-windows-${{ runner.os }}-v1
+
       - name: Install depot_tools
         shell: pwsh
         run: |
           git config --global core.longpaths true
 
-          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "$env:DEPOT_TOOLS_DIR"
+          if (-not (Test-Path "$env:DEPOT_TOOLS_DIR\.git")) {
+            if (Test-Path "$env:DEPOT_TOOLS_DIR") {
+              Remove-Item "$env:DEPOT_TOOLS_DIR" -Recurse -Force
+            }
+
+            git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "$env:DEPOT_TOOLS_DIR"
+          } else {
+            Push-Location "$env:DEPOT_TOOLS_DIR"
+            try {
+              git fetch --depth=1 origin main
+              git checkout main
+              git reset --hard origin/main
+            } finally {
+              Pop-Location
+            }
+          }
 
           "$env:DEPOT_TOOLS_DIR" | Out-File -FilePath $env:GITHUB_PATH -Append
 
-          Write-Host "Depot tools installed at $env:DEPOT_TOOLS_DIR"
+          Write-Host "Depot tools ready at $env:DEPOT_TOOLS_DIR"
+
+      - name: Cache V8 checkout
+        id: cache-v8
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.V8_DIR }}
+          key: v8-checkout-windows-${{ env.V8_REF }}-v1
+          restore-keys: |
+            v8-checkout-windows-${{ env.V8_REF }}-
+            v8-checkout-windows-
 
       - name: Fetch V8 with depot_tools
         shell: cmd
@@ -88,10 +121,16 @@ jobs:
 
           cd /d "%GITHUB_WORKSPACE%"
 
-          fetch --nohooks v8
+          if not exist "%V8_DIR%\.git" (
+            echo V8 checkout cache miss. Running fetch v8...
+            fetch --nohooks v8
+          ) else (
+            echo V8 checkout cache hit.
+          )
 
           cd /d "%V8_DIR%"
 
+          git fetch origin
           git checkout "%V8_REF%"
 
           gclient sync -D --no-history --shallow
@@ -116,6 +155,23 @@ jobs:
 
           "%V8_DIR%\buildtools\win\gn.exe" --version
           "%V8_DIR%\third_party\ninja\ninja.exe" --version
+
+      - name: Resolve V8 commit
+        shell: pwsh
+        run: |
+          $commit = git -C "$env:V8_DIR" rev-parse HEAD
+          "V8_COMMIT=$commit" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "V8_COMMIT=$commit"
+
+      - name: Cache V8 build output
+        id: cache-v8-build
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.V8_DIR }}\out\x64.release
+          key: v8-build-win-x64-${{ env.V8_COMMIT }}-${{ env.GN_ARGS_CACHE_VERSION }}
+          restore-keys: |
+            v8-build-win-x64-${{ env.V8_COMMIT }}-
+            v8-build-win-x64-
 
       - name: Generate V8 build files
         shell: pwsh
@@ -145,7 +201,6 @@ jobs:
             "v8_enable_sandbox=false"
             "treat_warnings_as_errors=false"
             "symbol_level=0"
-            "use_custom_libcxx=false"
           ) -join " "
 
           Write-Host "GN: $gn"
