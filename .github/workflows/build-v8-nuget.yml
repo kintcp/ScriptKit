@@ -89,35 +89,49 @@ jobs:
 
           gclient config "%V8_REPO%"
           gclient sync -D --no-history --shallow
-          gclient runhooks
 
-          where gn
-          where autoninja
+          echo Searching gn.exe...
+          dir /s /b "%V8_DIR%\gn.exe" || exit /b 0
+
+          echo Searching ninja.exe...
+          dir /s /b "%V8_DIR%\ninja.exe" || exit /b 0
+
+      - name: Locate V8 tools
+        shell: pwsh
+        run: |
+          $gn = Get-ChildItem "$env:V8_DIR" -Recurse -Filter "gn.exe" | Select-Object -First 1
+          if (-not $gn) {
+            throw "gn.exe not found under $env:V8_DIR"
+          }
+
+          $ninja = Get-ChildItem "$env:V8_DIR" -Recurse -Filter "ninja.exe" | Select-Object -First 1
+          if (-not $ninja) {
+            throw "ninja.exe not found under $env:V8_DIR"
+          }
+
+          "GN_EXE=$($gn.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "NINJA_EXE=$($ninja.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          Write-Host "GN_EXE=$($gn.FullName)"
+          Write-Host "NINJA_EXE=$($ninja.FullName)"
 
       - name: Generate V8 build files
         shell: cmd
         run: |
-          set PATH=%DEPOT_TOOLS_DIR%;%V8_DIR%\third_party\depot_tools;%PATH%
           set DEPOT_TOOLS_WIN_TOOLCHAIN=0
 
           cd /d "%V8_DIR%"
 
-          where gn
-          where autoninja
-
-          gn gen out\x64.release --args="is_debug=false target_cpu=""x64"" v8_target_cpu=""x64"" is_component_build=false v8_static_library=true v8_monolithic=true v8_use_external_startup_data=false v8_enable_i18n_support=false treat_warnings_as_errors=false symbol_level=0 use_custom_libcxx=false"
+          "%GN_EXE%" gen out\x64.release --args="is_debug=false target_cpu=""x64"" v8_target_cpu=""x64"" is_component_build=false v8_static_library=true v8_monolithic=true v8_use_external_startup_data=false v8_enable_i18n_support=false treat_warnings_as_errors=false symbol_level=0 use_custom_libcxx=false"
 
       - name: Build v8_monolith
         shell: cmd
         run: |
-          set PATH=%DEPOT_TOOLS_DIR%;%V8_DIR%\third_party\depot_tools;%PATH%
           set DEPOT_TOOLS_WIN_TOOLCHAIN=0
 
           cd /d "%V8_DIR%"
 
-          where autoninja
-
-          autoninja -C out\x64.release v8_monolith
+          "%NINJA_EXE%" -C out\x64.release v8_monolith
 
       - name: Prepare NuGet package files
         shell: pwsh
@@ -199,12 +213,6 @@ jobs:
               <tags>v8 native javascript win-x64</tags>
               <repository type="git" url="$env:V8_REPO" commit="$commit" />
             </metadata>
-            <files>
-              <file src="package\build\native\include\**\*.*" target="build\native\include" />
-              <file src="package\build\native\lib\win-x64\**\*.*" target="build\native\lib\win-x64" />
-              <file src="package\build\native\$env:PACKAGE_ID.props" target="build\native\$env:PACKAGE_ID.props" />
-              <file src="package\build\native\$env:PACKAGE_ID.targets" target="build\native\$env:PACKAGE_ID.targets" />
-            </files>
           </package>
           "@
 
@@ -227,14 +235,24 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:OUT_DIR | Out-Null
 
           $nupkg = Join-Path $env:OUT_DIR "$env:PACKAGE_ID.$env:VERSION.nupkg"
+          $nupkgRoot = Join-Path $env:WORK_DIR "nupkg-root"
 
           if (Test-Path $nupkg) {
             Remove-Item $nupkg -Force
           }
 
-          Push-Location $env:WORK_DIR
+          if (Test-Path $nupkgRoot) {
+            Remove-Item $nupkgRoot -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Force -Path $nupkgRoot | Out-Null
+
+          Copy-Item "$env:WORK_DIR\$env:PACKAGE_ID.nuspec" (Join-Path $nupkgRoot "$env:PACKAGE_ID.nuspec") -Force
+          Copy-Item "$env:WORK_DIR\package\build" (Join-Path $nupkgRoot "build") -Recurse -Force
+
+          Push-Location $nupkgRoot
           try {
-            Compress-Archive -Path "$env:PACKAGE_ID.nuspec", "package\build" -DestinationPath $nupkg -Force
+            Compress-Archive -Path "$env:PACKAGE_ID.nuspec", "build" -DestinationPath $nupkg -Force
           } finally {
             Pop-Location
           }
