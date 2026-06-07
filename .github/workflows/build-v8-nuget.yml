@@ -71,67 +71,71 @@ jobs:
       - name: Install depot_tools
         shell: pwsh
         run: |
+          git config --global core.longpaths true
+
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "$env:DEPOT_TOOLS_DIR"
+
           "$env:DEPOT_TOOLS_DIR" | Out-File -FilePath $env:GITHUB_PATH -Append
 
-      - name: Fetch V8
+          Write-Host "Depot tools installed at $env:DEPOT_TOOLS_DIR"
+
+      - name: Fetch V8 with depot_tools
         shell: cmd
         run: |
           set PATH=%DEPOT_TOOLS_DIR%;%PATH%
           set DEPOT_TOOLS_WIN_TOOLCHAIN=0
+          set GYP_MSVS_VERSION=2022
 
           cd /d "%GITHUB_WORKSPACE%"
 
-          git clone "%V8_REPO%" "%V8_DIR%"
+          fetch --nohooks v8
+
           cd /d "%V8_DIR%"
 
           git checkout "%V8_REF%"
 
-          gclient config "%V8_REPO%"
           gclient sync -D --no-history --shallow
+          gclient runhooks
 
-          echo Searching gn.exe...
-          dir /s /b "%V8_DIR%\gn.exe" || exit /b 0
+          echo V8 commit:
+          git rev-parse HEAD
+          git log -1 --oneline
 
-          echo Searching ninja.exe...
-          dir /s /b "%V8_DIR%\ninja.exe" || exit /b 0
+          echo Checking V8 tools:
+          if not exist "%V8_DIR%\buildtools\win\gn.exe" (
+            echo Missing %V8_DIR%\buildtools\win\gn.exe
+            dir /s /b "%V8_DIR%\buildtools"
+            exit /b 1
+          )
 
-      - name: Locate V8 tools
-        shell: pwsh
-        run: |
-          $gn = Get-ChildItem "$env:V8_DIR" -Recurse -Filter "gn.exe" | Select-Object -First 1
-          if (-not $gn) {
-            throw "gn.exe not found under $env:V8_DIR"
-          }
+          if not exist "%V8_DIR%\third_party\ninja\ninja.exe" (
+            echo Missing %V8_DIR%\third_party\ninja\ninja.exe
+            dir /s /b "%V8_DIR%\third_party\ninja"
+            exit /b 1
+          )
 
-          $ninja = Get-ChildItem "$env:V8_DIR" -Recurse -Filter "ninja.exe" | Select-Object -First 1
-          if (-not $ninja) {
-            throw "ninja.exe not found under $env:V8_DIR"
-          }
-
-          "GN_EXE=$($gn.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "NINJA_EXE=$($ninja.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-          Write-Host "GN_EXE=$($gn.FullName)"
-          Write-Host "NINJA_EXE=$($ninja.FullName)"
+          "%V8_DIR%\buildtools\win\gn.exe" --version
+          "%V8_DIR%\third_party\ninja\ninja.exe" --version
 
       - name: Generate V8 build files
         shell: cmd
         run: |
           set DEPOT_TOOLS_WIN_TOOLCHAIN=0
+          set GYP_MSVS_VERSION=2022
 
           cd /d "%V8_DIR%"
 
-          "%GN_EXE%" gen out\x64.release --args="is_debug=false target_cpu=""x64"" v8_target_cpu=""x64"" is_component_build=false v8_static_library=true v8_monolithic=true v8_use_external_startup_data=false v8_enable_i18n_support=false treat_warnings_as_errors=false symbol_level=0 use_custom_libcxx=false"
+          "%V8_DIR%\buildtools\win\gn.exe" gen out\x64.release --args="is_debug=false target_cpu=""x64"" v8_target_cpu=""x64"" is_component_build=false v8_static_library=true v8_monolithic=true v8_use_external_startup_data=false v8_enable_i18n_support=false treat_warnings_as_errors=false symbol_level=0 use_custom_libcxx=false"
 
       - name: Build v8_monolith
         shell: cmd
         run: |
           set DEPOT_TOOLS_WIN_TOOLCHAIN=0
+          set GYP_MSVS_VERSION=2022
 
           cd /d "%V8_DIR%"
 
-          "%NINJA_EXE%" -C out\x64.release v8_monolith
+          "%V8_DIR%\third_party\ninja\ninja.exe" -C out\x64.release v8_monolith
 
       - name: Prepare NuGet package files
         shell: pwsh
