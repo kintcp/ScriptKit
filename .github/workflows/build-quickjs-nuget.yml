@@ -249,11 +249,13 @@ jobs:
           if command -v llvm-dlltool >/dev/null 2>&1; then
             llvm-dlltool \
               -m i386:x86-64 \
+              -D "$DLL_NAME" \
               -d "$LIB_DIR/$DEF_NAME" \
               -l "$LIB_DIR/$LIB_NAME"
           else
             x86_64-w64-mingw32-dlltool \
               -m i386:x86-64 \
+              -D "$DLL_NAME" \
               -d "$LIB_DIR/$DEF_NAME" \
               -l "$LIB_DIR/$LIB_NAME"
           fi
