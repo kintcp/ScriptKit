@@ -195,6 +195,10 @@ jobs:
           "V8_COMMIT=$commit" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "V8_COMMIT=$commit"
 
+          $timestamp = git -C "$env:V8_DIR" log -1 --format="%ct"
+          $outPath = Join-Path $env:V8_DIR "build\util\LASTCHANGE.committime"
+          [System.IO.File]::WriteAllText($outPath, $timestamp)
+
       - name: Cache V8 build output
         uses: actions/cache@v4
         with:
