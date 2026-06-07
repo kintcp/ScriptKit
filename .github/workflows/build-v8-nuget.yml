@@ -40,7 +40,7 @@ jobs:
       V8_DIR: ${{ github.workspace }}\v8
       OUT_DIR: ${{ github.workspace }}\artifacts\v8-nuget
       WORK_DIR: ${{ github.workspace }}\artifacts\v8-nuget\work
-      GN_ARGS_CACHE_VERSION: v7
+      GN_ARGS_CACHE_VERSION: v8
 
     steps:
       - name: Checkout project
@@ -73,7 +73,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.DEPOT_TOOLS_DIR }}
-          key: depot-tools-windows-${{ runner.os }}-v2
+          key: depot-tools-windows-${{ runner.os }}-v3
 
       - name: Install depot_tools
         shell: pwsh
@@ -105,7 +105,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.V8_DIR }}
-          key: v8-checkout-windows-${{ env.V8_REF }}-v3
+          key: v8-checkout-windows-${{ env.V8_REF }}-v4
           restore-keys: |
             v8-checkout-windows-${{ env.V8_REF }}-
             v8-checkout-windows-
@@ -138,6 +138,7 @@ jobs:
           git log -1 --oneline
 
           echo Checking V8 tools:
+
           if not exist "%V8_DIR%\buildtools\win\gn.exe" (
             echo Missing %V8_DIR%\buildtools\win\gn.exe
             dir /s /b "%V8_DIR%\buildtools"
@@ -189,9 +190,7 @@ jobs:
             'target_os="win"'
             'target_cpu="x64"'
             'v8_target_cpu="x64"'
-            "is_clang=true"
             "is_component_build=false"
-            "v8_static_library=true"
             "v8_monolithic=true"
             "v8_use_external_startup_data=false"
             "v8_enable_i18n_support=false"
@@ -261,6 +260,7 @@ jobs:
             Get-ChildItem "$env:V8_DIR\out\x64.release" -Recurse -Filter "v8_monolith.lib" | ForEach-Object {
               Write-Host $_.FullName
             }
+
             throw "v8_monolith.lib not found."
           }
 
@@ -347,6 +347,7 @@ jobs:
           Copy-Item "$env:WORK_DIR\package\build" (Join-Path $nupkgRoot "build") -Recurse -Force
 
           Push-Location $nupkgRoot
+
           try {
             Compress-Archive -Path "$env:PACKAGE_ID.nuspec", "build" -DestinationPath $nupkg -Force
           } finally {
