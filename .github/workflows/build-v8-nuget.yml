@@ -19,6 +19,7 @@ on:
         options:
           - "false"
           - "true"
+
   push:
     tags:
       - "v8-v*"
@@ -88,24 +89,34 @@ jobs:
 
           gclient config "%V8_REPO%"
           gclient sync -D --no-history --shallow
+          gclient runhooks
+
+          where gn
+          where autoninja
 
       - name: Generate V8 build files
         shell: cmd
         run: |
-          set PATH=%DEPOT_TOOLS_DIR%;%PATH%
+          set PATH=%DEPOT_TOOLS_DIR%;%V8_DIR%\third_party\depot_tools;%PATH%
           set DEPOT_TOOLS_WIN_TOOLCHAIN=0
 
           cd /d "%V8_DIR%"
+
+          where gn
+          where autoninja
 
           gn gen out\x64.release --args="is_debug=false target_cpu=""x64"" v8_target_cpu=""x64"" is_component_build=false v8_static_library=true v8_monolithic=true v8_use_external_startup_data=false v8_enable_i18n_support=false treat_warnings_as_errors=false symbol_level=0 use_custom_libcxx=false"
 
       - name: Build v8_monolith
         shell: cmd
         run: |
-          set PATH=%DEPOT_TOOLS_DIR%;%PATH%
+          set PATH=%DEPOT_TOOLS_DIR%;%V8_DIR%\third_party\depot_tools;%PATH%
           set DEPOT_TOOLS_WIN_TOOLCHAIN=0
 
           cd /d "%V8_DIR%"
+
+          where autoninja
+
           autoninja -C out\x64.release v8_monolith
 
       - name: Prepare NuGet package files
@@ -127,6 +138,7 @@ jobs:
           )
 
           $libSource = $null
+
           foreach ($candidate in $libCandidates) {
             if (Test-Path $candidate) {
               $libSource = $candidate
@@ -238,6 +250,7 @@ jobs:
           Add-Type -AssemblyName System.IO.Compression.FileSystem
 
           $zip = [System.IO.Compression.ZipFile]::OpenRead($env:NUPKG)
+
           try {
             foreach ($entry in $zip.Entries) {
               Write-Host $entry.FullName
