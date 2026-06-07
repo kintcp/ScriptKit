@@ -6,11 +6,11 @@ on:
       version:
         description: "NuGet package version"
         required: true
-        default: "13.8.258.21"
+        default: "15.1.44"
       v8_ref:
         description: "V8 git ref, branch, tag, or commit"
         required: true
-        default: "13.8.258.21"
+        default: "15.1.44"
       publish:
         description: "Publish to GitHub Packages"
         required: true
