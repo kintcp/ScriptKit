@@ -164,6 +164,9 @@ jobs:
           gclient sync -D --no-history --shallow
           gclient runhooks
 
+          echo "Generating LASTCHANGE"
+          python3 build\util\lastchange.py -o build\util\LASTCHANGE
+
           echo V8 commit:
           git rev-parse HEAD
           git log -1 --oneline
