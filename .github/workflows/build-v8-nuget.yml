@@ -6,11 +6,11 @@ on:
       version:
         description: "NuGet package version"
         required: true
-        default: "14.0.0"
+        default: "13.8.258.21"
       v8_ref:
         description: "V8 git ref, branch, tag, or commit"
         required: true
-        default: "main"
+        default: "13.8.258.21"
       publish:
         description: "Publish to GitHub Packages"
         required: true
@@ -40,7 +40,7 @@ jobs:
       V8_DIR: ${{ github.workspace }}\v8
       OUT_DIR: ${{ github.workspace }}\artifacts\v8-nuget
       WORK_DIR: ${{ github.workspace }}\artifacts\v8-nuget\work
-      GN_ARGS_CACHE_VERSION: v4
+      GN_ARGS_CACHE_VERSION: v7
 
     steps:
       - name: Checkout project
@@ -55,7 +55,7 @@ jobs:
           } else {
             $tag = "${env:GITHUB_REF_NAME}"
             $version = $tag.Replace("v8-v", "")
-            $v8Ref = "main"
+            $v8Ref = $version
           }
 
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -70,11 +70,10 @@ jobs:
           python-version: "3.11"
 
       - name: Cache depot_tools
-        id: cache-depot-tools
         uses: actions/cache@v4
         with:
           path: ${{ env.DEPOT_TOOLS_DIR }}
-          key: depot-tools-windows-${{ runner.os }}-v1
+          key: depot-tools-windows-${{ runner.os }}-v2
 
       - name: Install depot_tools
         shell: pwsh
@@ -103,11 +102,10 @@ jobs:
           Write-Host "Depot tools ready at $env:DEPOT_TOOLS_DIR"
 
       - name: Cache V8 checkout
-        id: cache-v8
         uses: actions/cache@v4
         with:
           path: ${{ env.V8_DIR }}
-          key: v8-checkout-windows-${{ env.V8_REF }}-v1
+          key: v8-checkout-windows-${{ env.V8_REF }}-v3
           restore-keys: |
             v8-checkout-windows-${{ env.V8_REF }}-
             v8-checkout-windows-
@@ -116,7 +114,6 @@ jobs:
         shell: cmd
         run: |
           set PATH=%DEPOT_TOOLS_DIR%;%PATH%
-          set DEPOT_TOOLS_WIN_TOOLCHAIN=0
           set GYP_MSVS_VERSION=2022
 
           cd /d "%GITHUB_WORKSPACE%"
@@ -130,7 +127,7 @@ jobs:
 
           cd /d "%V8_DIR%"
 
-          git fetch origin
+          git fetch origin --tags
           git checkout "%V8_REF%"
 
           gclient sync -D --no-history --shallow
@@ -164,7 +161,6 @@ jobs:
           Write-Host "V8_COMMIT=$commit"
 
       - name: Cache V8 build output
-        id: cache-v8-build
         uses: actions/cache@v4
         with:
           path: ${{ env.V8_DIR }}\out\x64.release
@@ -176,7 +172,6 @@ jobs:
       - name: Generate V8 build files
         shell: pwsh
         run: |
-          $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
           $env:GYP_MSVS_VERSION = "2022"
 
           Set-Location $env:V8_DIR
@@ -191,8 +186,10 @@ jobs:
 
           $gnArgs = @(
             "is_debug=false"
+            'target_os="win"'
             'target_cpu="x64"'
             'v8_target_cpu="x64"'
+            "is_clang=true"
             "is_component_build=false"
             "v8_static_library=true"
             "v8_monolithic=true"
@@ -216,7 +213,6 @@ jobs:
       - name: Build v8_monolith
         shell: pwsh
         run: |
-          $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
           $env:GYP_MSVS_VERSION = "2022"
 
           Set-Location $env:V8_DIR
@@ -292,7 +288,7 @@ jobs:
             <ItemDefinitionGroup Condition="'$(Platform)' == 'x64'">
               <Link>
                 <AdditionalLibraryDirectories>$(MSBuildThisFileDirectory)lib\win-x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-                <AdditionalDependencies>v8_monolith.lib;winmm.lib;dbghelp.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+                <AdditionalDependencies>v8_monolith.lib;winmm.lib;dbghelp.lib;shlwapi.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
               </Link>
             </ItemDefinitionGroup>
           </Project>
