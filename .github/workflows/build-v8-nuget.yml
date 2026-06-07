@@ -142,6 +142,7 @@ jobs:
             "v8_monolithic=true"
             "v8_use_external_startup_data=false"
             "v8_enable_i18n_support=false"
+            "v8_enable_sandbox=false"
             "treat_warnings_as_errors=false"
             "symbol_level=0"
             "use_custom_libcxx=false"
@@ -331,22 +332,23 @@ jobs:
           )
 
           foreach ($item in $required) {
-            $found = $false
-
             $zip = [System.IO.Compression.ZipFile]::OpenRead($env:NUPKG)
+
             try {
+              $found = $false
+
               foreach ($entry in $zip.Entries) {
                 if ($entry.FullName -eq $item) {
                   $found = $true
                   break
                 }
               }
+
+              if (-not $found) {
+                throw "Required file missing from NuGet package: $item"
+              }
             } finally {
               $zip.Dispose()
-            }
-
-            if (-not $found) {
-              throw "Required file missing from NuGet package: $item"
             }
           }
 
