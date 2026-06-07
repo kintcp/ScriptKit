@@ -1,0 +1,380 @@
+name: Build X.Script.QuickJS NuGet
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "NuGet package version"
+        required: true
+        default: "2026.6.4"
+      quickjs_ref:
+        description: "QuickJS git ref, tag, branch, or commit"
+        required: true
+        default: "master"
+      publish:
+        description: "Publish to GitHub Packages"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+  push:
+    tags:
+      - "quickjs-v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build QuickJS Windows x64 NuGet
+    runs-on: ubuntu-latest
+
+    env:
+      PACKAGE_ID: X.Script.QuickJS
+      RID: win-x64
+      QUICKJS_REPO: https://github.com/bellard/quickjs.git
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#quickjs-v}"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Resolved version: $VERSION"
+
+      - name: Resolve QuickJS ref
+        id: quickjs_ref
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            QUICKJS_REF="${{ github.event.inputs.quickjs_ref }}"
+          else
+            QUICKJS_REF="master"
+          fi
+
+          echo "quickjs_ref=$QUICKJS_REF" >> "$GITHUB_OUTPUT"
+          echo "QUICKJS_REF=$QUICKJS_REF" >> "$GITHUB_ENV"
+          echo "Resolved QuickJS ref: $QUICKJS_REF"
+
+      - name: Prepare paths
+        id: paths
+        shell: bash
+        run: |
+          OUT_DIR="$(realpath -m artifacts/quickjs-nuget)"
+          WORK_DIR="$OUT_DIR/work"
+          QUICKJS_SOURCE_DIR="$WORK_DIR/quickjs"
+
+          echo "out_dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
+          echo "work_dir=$WORK_DIR" >> "$GITHUB_OUTPUT"
+          echo "quickjs_source_dir=$QUICKJS_SOURCE_DIR" >> "$GITHUB_OUTPUT"
+
+          echo "OUT_DIR=$OUT_DIR" >> "$GITHUB_ENV"
+          echo "WORK_DIR=$WORK_DIR" >> "$GITHUB_ENV"
+          echo "QUICKJS_SOURCE_DIR=$QUICKJS_SOURCE_DIR" >> "$GITHUB_ENV"
+
+      - name: Install MinGW-w64 tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            mingw-w64 \
+            binutils-mingw-w64-x86-64 \
+            llvm \
+            zip
+
+          x86_64-w64-mingw32-gcc --version
+          x86_64-w64-mingw32-ar --version
+          x86_64-w64-mingw32-dlltool --version || true
+          llvm-dlltool --version || true
+
+      - name: Clone official QuickJS
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf "$WORK_DIR"
+          mkdir -p "$WORK_DIR"
+
+          git clone --depth 1 --branch "$QUICKJS_REF" "$QUICKJS_REPO" "$QUICKJS_SOURCE_DIR" || {
+            echo "Shallow clone failed. Trying full clone and checkout..."
+            rm -rf "$QUICKJS_SOURCE_DIR"
+            git clone "$QUICKJS_REPO" "$QUICKJS_SOURCE_DIR"
+            cd "$QUICKJS_SOURCE_DIR"
+            git checkout "$QUICKJS_REF"
+          }
+
+          cd "$QUICKJS_SOURCE_DIR"
+          echo "QuickJS commit:"
+          git rev-parse HEAD
+          git log -1 --oneline
+
+      - name: Validate QuickJS source files
+        shell: bash
+        run: |
+          required_files=(
+            quickjs.c
+            quickjs.h
+            cutils.c
+            cutils.h
+            libregexp.c
+            libregexp.h
+            libunicode.c
+            libunicode.h
+            dtoa.c
+            list.h
+          )
+
+          for file in "${required_files[@]}"; do
+            if [ ! -f "$QUICKJS_SOURCE_DIR/$file" ]; then
+              echo "Missing QuickJS file: $QUICKJS_SOURCE_DIR/$file"
+              exit 1
+            fi
+          done
+
+      - name: Build QuickJS DLL and MSVC import library
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRC_DIR="$QUICKJS_SOURCE_DIR"
+          BUILD_DIR="$WORK_DIR/build"
+          PKG_ROOT="$WORK_DIR/package"
+
+          INCLUDE_DIR="$PKG_ROOT/build/native/include"
+          BIN_DIR="$PKG_ROOT/build/native/bin/win-x64"
+          LIB_DIR="$PKG_ROOT/build/native/lib/win-x64"
+
+          DLL_NAME="$PACKAGE_ID.dll"
+          LIB_NAME="$PACKAGE_ID.lib"
+          DEF_NAME="$PACKAGE_ID.def"
+          GNU_IMPLIB_NAME="lib$PACKAGE_ID.dll.a"
+          STATIC_A_NAME="lib$PACKAGE_ID.a"
+
+          mkdir -p "$BUILD_DIR" "$INCLUDE_DIR" "$BIN_DIR" "$LIB_DIR"
+
+          echo "Copying headers..."
+
+          header_files=(
+            quickjs.h
+            quickjs-libc.h
+            quickjs-atom.h
+            cutils.h
+            libregexp.h
+            libunicode.h
+            list.h
+          )
+
+          for header in "${header_files[@]}"; do
+            if [ -f "$SRC_DIR/$header" ]; then
+              cp "$SRC_DIR/$header" "$INCLUDE_DIR/$header"
+            fi
+          done
+
+          sources=(
+            quickjs.c
+            cutils.c
+            libregexp.c
+            libunicode.c
+            dtoa.c
+          )
+
+          cflags=(
+            -O2
+            -DNDEBUG
+            -DCONFIG_WIN32
+            "-DCONFIG_VERSION=\"$VERSION\""
+            -D_GNU_SOURCE
+            -I"$SRC_DIR"
+            -Wall
+            -Wextra
+            -Wno-unused-parameter
+            -Wno-missing-field-initializers
+            -Wno-sign-compare
+            -Wno-implicit-fallthrough
+          )
+
+          objects=()
+
+          echo "Compiling objects..."
+
+          for source in "${sources[@]}"; do
+            obj="$BUILD_DIR/${source%.c}.o"
+            echo "  $source -> $obj"
+
+            x86_64-w64-mingw32-gcc \
+              "${cflags[@]}" \
+              -c "$SRC_DIR/$source" \
+              -o "$obj"
+
+            objects+=("$obj")
+          done
+
+          echo "Creating static MinGW archive..."
+          x86_64-w64-mingw32-ar rcs "$LIB_DIR/$STATIC_A_NAME" "${objects[@]}"
+
+          echo "Creating QuickJS DLL..."
+
+          x86_64-w64-mingw32-gcc \
+            -shared \
+            -o "$BIN_DIR/$DLL_NAME" \
+            "${objects[@]}" \
+            -Wl,--export-all-symbols \
+            -Wl,--out-implib,"$LIB_DIR/$GNU_IMPLIB_NAME" \
+            -Wl,--output-def,"$LIB_DIR/$DEF_NAME" \
+            -static-libgcc \
+            -lwinpthread
+
+          x86_64-w64-mingw32-strip "$BIN_DIR/$DLL_NAME"
+
+          echo "Creating MSVC import library..."
+
+          if command -v llvm-dlltool >/dev/null 2>&1; then
+            llvm-dlltool \
+              -m i386:x86-64 \
+              -d "$LIB_DIR/$DEF_NAME" \
+              -l "$LIB_DIR/$LIB_NAME"
+          else
+            x86_64-w64-mingw32-dlltool \
+              -m i386:x86-64 \
+              -d "$LIB_DIR/$DEF_NAME" \
+              -l "$LIB_DIR/$LIB_NAME"
+          fi
+
+          echo "Copying libwinpthread-1.dll..."
+
+          WINPTHREAD_DLL="$(x86_64-w64-mingw32-gcc -print-file-name=libwinpthread-1.dll || true)"
+
+          if [ -n "$WINPTHREAD_DLL" ] && [ -f "$WINPTHREAD_DLL" ]; then
+            cp "$WINPTHREAD_DLL" "$BIN_DIR/libwinpthread-1.dll"
+          else
+            echo "Warning: libwinpthread-1.dll not found via gcc -print-file-name"
+          fi
+
+          echo "Output files:"
+          find "$PKG_ROOT" -type f | sort
+
+      - name: Generate NuGet build files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PKG_ROOT="$WORK_DIR/package"
+          mkdir -p "$PKG_ROOT/build/native"
+
+          cat > "$PKG_ROOT/build/native/$PACKAGE_ID.props" <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <Project>
+            <ItemDefinitionGroup>
+              <ClCompile>
+                <AdditionalIncludeDirectories>\$(MSBuildThisFileDirectory)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+              </ClCompile>
+            </ItemDefinitionGroup>
+          </Project>
+          EOF
+
+          cat > "$PKG_ROOT/build/native/$PACKAGE_ID.targets" <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <Project>
+            <ItemDefinitionGroup Condition="'\$(Platform)' == 'x64'">
+              <Link>
+                <AdditionalLibraryDirectories>\$(MSBuildThisFileDirectory)lib\\win-x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+                <AdditionalDependencies>$PACKAGE_ID.lib;%(AdditionalDependencies)</AdditionalDependencies>
+              </Link>
+            </ItemDefinitionGroup>
+
+            <ItemGroup Condition="'\$(Platform)' == 'x64'">
+              <None Include="\$(MSBuildThisFileDirectory)bin\\win-x64\\$PACKAGE_ID.dll">
+                <Link>$PACKAGE_ID.dll</Link>
+                <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+              </None>
+              <None Include="\$(MSBuildThisFileDirectory)bin\\win-x64\\libwinpthread-1.dll" Condition="Exists('\$(MSBuildThisFileDirectory)bin\\win-x64\\libwinpthread-1.dll')">
+                <Link>libwinpthread-1.dll</Link>
+                <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+              </None>
+            </ItemGroup>
+          </Project>
+          EOF
+
+          cat > "$WORK_DIR/$PACKAGE_ID.nuspec" <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <package>
+            <metadata>
+              <id>$PACKAGE_ID</id>
+              <version>$VERSION</version>
+              <authors>X</authors>
+              <owners>X</owners>
+              <requireLicenseAcceptance>false</requireLicenseAcceptance>
+              <description>QuickJS native Windows x64 library built from official repository with MinGW-w64.</description>
+              <tags>quickjs native mingw win-x64 javascript</tags>
+              <repository type="git" url="$QUICKJS_REPO" commit="$(cd "$QUICKJS_SOURCE_DIR" && git rev-parse HEAD)" />
+            </metadata>
+            <files>
+              <file src="package/build/native/include/**/*.*" target="build/native/include" />
+              <file src="package/build/native/bin/win-x64/**/*.*" target="build/native/bin/win-x64" />
+              <file src="package/build/native/lib/win-x64/**/*.*" target="build/native/lib/win-x64" />
+              <file src="package/build/native/$PACKAGE_ID.props" target="build/native/$PACKAGE_ID.props" />
+              <file src="package/build/native/$PACKAGE_ID.targets" target="build/native/$PACKAGE_ID.targets" />
+            </files>
+          </package>
+          EOF
+
+      - name: Pack NuGet manually
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$OUT_DIR"
+
+          NUPKG="$OUT_DIR/$PACKAGE_ID.$VERSION.nupkg"
+
+          rm -f "$NUPKG"
+
+          cd "$WORK_DIR"
+
+          zip -r "$NUPKG" \
+            "$PACKAGE_ID.nuspec" \
+            package/build
+
+          echo "NUPKG=$NUPKG" >> "$GITHUB_ENV"
+
+          echo "Created package:"
+          ls -lh "$NUPKG"
+
+      - name: Verify NuGet content
+        shell: bash
+        run: |
+          unzip -l "$NUPKG"
+
+      - name: Upload NuGet artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: X.Script.QuickJS-${{ steps.version.outputs.version }}
+          path: ${{ env.NUPKG }}
+          if-no-files-found: error
+
+      - name: Publish to GitHub Packages
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'
+        shell: bash
+        run: |
+          dotnet nuget push "$NUPKG" \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --api-key "${{ secrets.GITHUB_TOKEN }}" \
+            --skip-duplicate
