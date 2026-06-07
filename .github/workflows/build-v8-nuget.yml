@@ -40,7 +40,7 @@ jobs:
       V8_DIR: ${{ github.workspace }}\v8
       OUT_DIR: ${{ github.workspace }}\artifacts\v8-nuget
       WORK_DIR: ${{ github.workspace }}\artifacts\v8-nuget\work
-      GN_ARGS_CACHE_VERSION: v8
+      GN_ARGS_CACHE_VERSION: v9
 
     steps:
       - name: Checkout project
@@ -69,11 +69,38 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Locate Visual Studio
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe not found"
+          }
+
+          $vsPath = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+
+          if (-not $vsPath) {
+            throw "Visual Studio with VC tools not found"
+          }
+
+          $vsPathForGn = $vsPath -replace "\\", "/"
+
+          "VS2022_INSTALL=$vsPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VS2022_INSTALL_GN=$vsPathForGn" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          Write-Host "VS2022_INSTALL=$vsPath"
+          Write-Host "VS2022_INSTALL_GN=$vsPathForGn"
+
       - name: Cache depot_tools
         uses: actions/cache@v4
         with:
           path: ${{ env.DEPOT_TOOLS_DIR }}
-          key: depot-tools-windows-${{ runner.os }}-v3
+          key: depot-tools-windows-${{ runner.os }}-v4
 
       - name: Install depot_tools
         shell: pwsh
@@ -105,7 +132,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.V8_DIR }}
-          key: v8-checkout-windows-${{ env.V8_REF }}-v4
+          key: v8-checkout-windows-${{ env.V8_REF }}-v5
           restore-keys: |
             v8-checkout-windows-${{ env.V8_REF }}-
             v8-checkout-windows-
@@ -114,6 +141,7 @@ jobs:
         shell: cmd
         run: |
           set PATH=%DEPOT_TOOLS_DIR%;%PATH%
+          set DEPOT_TOOLS_WIN_TOOLCHAIN=0
           set GYP_MSVS_VERSION=2022
 
           cd /d "%GITHUB_WORKSPACE%"
@@ -173,6 +201,7 @@ jobs:
       - name: Generate V8 build files
         shell: pwsh
         run: |
+          $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
           $env:GYP_MSVS_VERSION = "2022"
 
           Set-Location $env:V8_DIR
@@ -181,6 +210,10 @@ jobs:
 
           if (-not (Test-Path $gn)) {
             throw "gn.exe not found: $gn"
+          }
+
+          if (-not $env:VS2022_INSTALL_GN) {
+            throw "VS2022_INSTALL_GN is empty"
           }
 
           $buildDir = "out/x64.release"
@@ -197,6 +230,8 @@ jobs:
             "v8_enable_sandbox=false"
             "treat_warnings_as_errors=false"
             "symbol_level=0"
+            'visual_studio_version="2022"'
+            "visual_studio_path=`"$env:VS2022_INSTALL_GN`""
           ) -join " "
 
           Write-Host "GN: $gn"
@@ -212,6 +247,7 @@ jobs:
       - name: Build v8_monolith
         shell: pwsh
         run: |
+          $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
           $env:GYP_MSVS_VERSION = "2022"
 
           Set-Location $env:V8_DIR
