@@ -1,0 +1,263 @@
+name: Build X.Script.V8 NuGet
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "NuGet package version"
+        required: true
+        default: "14.0.0"
+      v8_ref:
+        description: "V8 git ref, branch, tag, or commit"
+        required: true
+        default: "main"
+      publish:
+        description: "Publish to GitHub Packages"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+  push:
+    tags:
+      - "v8-v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build V8 Windows x64 NuGet
+    runs-on: windows-latest
+
+    env:
+      PACKAGE_ID: X.Script.V8
+      V8_REPO: https://chromium.googlesource.com/v8/v8.git
+      DEPOT_TOOLS_DIR: ${{ github.workspace }}\depot_tools
+      V8_DIR: ${{ github.workspace }}\v8
+      OUT_DIR: ${{ github.workspace }}\artifacts\v8-nuget
+      WORK_DIR: ${{ github.workspace }}\artifacts\v8-nuget\work
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Resolve version and V8 ref
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ github.event.inputs.version }}"
+            $v8Ref = "${{ github.event.inputs.v8_ref }}"
+          } else {
+            $tag = "${env:GITHUB_REF_NAME}"
+            $version = $tag.Replace("v8-v", "")
+            $v8Ref = "main"
+          }
+
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "V8_REF=$v8Ref" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          Write-Host "VERSION=$version"
+          Write-Host "V8_REF=$v8Ref"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install depot_tools
+        shell: pwsh
+        run: |
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "$env:DEPOT_TOOLS_DIR"
+          "$env:DEPOT_TOOLS_DIR" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Fetch V8
+        shell: cmd
+        run: |
+          set PATH=%DEPOT_TOOLS_DIR%;%PATH%
+          set DEPOT_TOOLS_WIN_TOOLCHAIN=0
+
+          cd /d "%GITHUB_WORKSPACE%"
+
+          git clone "%V8_REPO%" "%V8_DIR%"
+          cd /d "%V8_DIR%"
+
+          git checkout "%V8_REF%"
+
+          gclient config "%V8_REPO%"
+          gclient sync -D --no-history --shallow
+
+      - name: Generate V8 build files
+        shell: cmd
+        run: |
+          set PATH=%DEPOT_TOOLS_DIR%;%PATH%
+          set DEPOT_TOOLS_WIN_TOOLCHAIN=0
+
+          cd /d "%V8_DIR%"
+
+          gn gen out\x64.release --args="is_debug=false target_cpu=""x64"" v8_target_cpu=""x64"" is_component_build=false v8_static_library=true v8_monolithic=true v8_use_external_startup_data=false v8_enable_i18n_support=false treat_warnings_as_errors=false symbol_level=0 use_custom_libcxx=false"
+
+      - name: Build v8_monolith
+        shell: cmd
+        run: |
+          set PATH=%DEPOT_TOOLS_DIR%;%PATH%
+          set DEPOT_TOOLS_WIN_TOOLCHAIN=0
+
+          cd /d "%V8_DIR%"
+          autoninja -C out\x64.release v8_monolith
+
+      - name: Prepare NuGet package files
+        shell: pwsh
+        run: |
+          $pkgRoot = Join-Path $env:WORK_DIR "package"
+          $buildNativeDir = Join-Path $pkgRoot "build\native"
+          $includeDir = Join-Path $buildNativeDir "include"
+          $libDir = Join-Path $buildNativeDir "lib\win-x64"
+
+          New-Item -ItemType Directory -Force -Path $includeDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+
+          Copy-Item "$env:V8_DIR\include\*" $includeDir -Recurse -Force
+
+          $libCandidates = @(
+            "$env:V8_DIR\out\x64.release\obj\v8_monolith.lib",
+            "$env:V8_DIR\out\x64.release\v8_monolith.lib"
+          )
+
+          $libSource = $null
+          foreach ($candidate in $libCandidates) {
+            if (Test-Path $candidate) {
+              $libSource = $candidate
+              break
+            }
+          }
+
+          if (-not $libSource) {
+            Write-Host "Searching for v8_monolith.lib..."
+            Get-ChildItem "$env:V8_DIR\out\x64.release" -Recurse -Filter "v8_monolith.lib" | ForEach-Object {
+              Write-Host $_.FullName
+            }
+            throw "v8_monolith.lib not found."
+          }
+
+          Copy-Item $libSource (Join-Path $libDir "v8_monolith.lib") -Force
+
+          $propsPath = Join-Path $buildNativeDir "$env:PACKAGE_ID.props"
+          $targetsPath = Join-Path $buildNativeDir "$env:PACKAGE_ID.targets"
+          $nuspecPath = Join-Path $env:WORK_DIR "$env:PACKAGE_ID.nuspec"
+
+          $propsContent = @'
+          <?xml version="1.0" encoding="utf-8"?>
+          <Project>
+            <ItemDefinitionGroup>
+              <ClCompile>
+                <LanguageStandard>stdcpp20</LanguageStandard>
+                <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+              </ClCompile>
+            </ItemDefinitionGroup>
+          </Project>
+          '@
+
+          $targetsContent = @'
+          <?xml version="1.0" encoding="utf-8"?>
+          <Project>
+            <ItemDefinitionGroup Condition="'$(Platform)' == 'x64'">
+              <Link>
+                <AdditionalLibraryDirectories>$(MSBuildThisFileDirectory)lib\win-x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+                <AdditionalDependencies>v8_monolith.lib;winmm.lib;dbghelp.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+              </Link>
+            </ItemDefinitionGroup>
+          </Project>
+          '@
+
+          $commit = git -C "$env:V8_DIR" rev-parse HEAD
+
+          $nuspecContent = @"
+          <?xml version="1.0" encoding="utf-8"?>
+          <package>
+            <metadata>
+              <id>$env:PACKAGE_ID</id>
+              <version>$env:VERSION</version>
+              <authors>X</authors>
+              <owners>X</owners>
+              <requireLicenseAcceptance>false</requireLicenseAcceptance>
+              <description>V8 native Windows x64 static library and headers for X.Script.</description>
+              <tags>v8 native javascript win-x64</tags>
+              <repository type="git" url="$env:V8_REPO" commit="$commit" />
+            </metadata>
+            <files>
+              <file src="package\build\native\include\**\*.*" target="build\native\include" />
+              <file src="package\build\native\lib\win-x64\**\*.*" target="build\native\lib\win-x64" />
+              <file src="package\build\native\$env:PACKAGE_ID.props" target="build\native\$env:PACKAGE_ID.props" />
+              <file src="package\build\native\$env:PACKAGE_ID.targets" target="build\native\$env:PACKAGE_ID.targets" />
+            </files>
+          </package>
+          "@
+
+          $propsContent = $propsContent -replace "^[ ]{10}", ""
+          $targetsContent = $targetsContent -replace "^[ ]{10}", ""
+          $nuspecContent = $nuspecContent -replace "^[ ]{10}", ""
+
+          Set-Content -Path $propsPath -Value $propsContent -Encoding UTF8
+          Set-Content -Path $targetsPath -Value $targetsContent -Encoding UTF8
+          Set-Content -Path $nuspecPath -Value $nuspecContent -Encoding UTF8
+
+          Write-Host "Package layout:"
+          Get-ChildItem $pkgRoot -Recurse | ForEach-Object {
+            Write-Host $_.FullName
+          }
+
+      - name: Pack NuGet
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:OUT_DIR | Out-Null
+
+          $nupkg = Join-Path $env:OUT_DIR "$env:PACKAGE_ID.$env:VERSION.nupkg"
+
+          if (Test-Path $nupkg) {
+            Remove-Item $nupkg -Force
+          }
+
+          Push-Location $env:WORK_DIR
+          try {
+            Compress-Archive -Path "$env:PACKAGE_ID.nuspec", "package\build" -DestinationPath $nupkg -Force
+          } finally {
+            Pop-Location
+          }
+
+          "NUPKG=$nupkg" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          Write-Host "Created package:"
+          Write-Host $nupkg
+
+      - name: Verify NuGet content
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($env:NUPKG)
+          try {
+            foreach ($entry in $zip.Entries) {
+              Write-Host $entry.FullName
+            }
+          } finally {
+            $zip.Dispose()
+          }
+
+      - name: Upload NuGet artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: X.Script.V8
+          path: ${{ env.NUPKG }}
+          if-no-files-found: error
+
+      - name: Publish to GitHub Packages
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'
+        shell: pwsh
+        run: |
+          dotnet nuget push "$env:NUPKG" `
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" `
+            --api-key "${{ secrets.GITHUB_TOKEN }}" `
+            --skip-duplicate
