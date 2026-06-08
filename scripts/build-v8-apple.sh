@@ -61,7 +61,7 @@ build_v8() {
         use_partition_alloc_as_malloc=false \
         enable_ios_bitcode=false \
         ios_enable_code_signing=false \
-        ios_code_signing_identity="" \
+        ios_code_signing_identity=\"\" \
         $jit_flag"
         
     case $platform in
