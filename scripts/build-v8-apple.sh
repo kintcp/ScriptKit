@@ -55,6 +55,9 @@ build_v8() {
         treat_warnings_as_errors=false \
         symbol_level=0 \
         use_custom_libcxx=false \
+        use_allocator_shim=false \
+        use_partition_alloc_as_malloc=false \
+        enable_ios_bitcode=false \
         $jit_flag"
         
     case $platform in
