@@ -4,6 +4,10 @@ set -euo pipefail
 
 # Configuration
 V8_VERSION="${1:-15.1.44}"
+PLATFORM="${2:-}"
+ARCH="${3:-}"
+JIT_ENABLED="${4:-false}"
+
 V8_REPO="https://chromium.googlesource.com/v8/v8.git"
 WORKDIR="$(pwd)/v8-apple-build"
 DEPOT_TOOLS="$WORKDIR/depot_tools"
@@ -16,7 +20,7 @@ mkdir -p "$OUTPUT_DIR"
 # Install depot_tools
 if [ ! -d "$DEPOT_TOOLS" ]; then
     echo "Cloning depot_tools..."
-    git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "$DEPOT_TOOLS"
+    git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$DEPOT_TOOLS"
 fi
 export PATH="$DEPOT_TOOLS:$PATH"
 
@@ -26,13 +30,14 @@ if [ ! -d "$V8_DIR" ]; then
     echo "Fetching V8..."
     fetch --nohooks v8
     echo "target_os = ['ios', 'mac']" >> .gclient
-    gclient sync
 fi
 
 cd "$V8_DIR"
 git fetch origin --tags
 git checkout "$V8_VERSION"
-gclient sync -D
+
+echo "Running gclient sync..."
+gclient sync -D --no-history --shallow
 
 # Build function
 build_v8() {
@@ -72,70 +77,86 @@ build_v8() {
             gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"device\" ios_deployment_target=\"13.0\""
             ;;
         ios-simulator)
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" use_remoteexec=false target_environment=\"simulator\""
-            ;;
-        tvos)
-            # Experimental tvOS support using iOS target
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"device\" ios_deployment_target=\"13.0\""
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" use_remoteexec=false target_environment=\"simulator\" ios_deployment_target=\"13.0\""
             ;;
     esac
 
     echo "Building V8 for $platform $arch (JIT: $jit_enabled)..."
     gn gen "$build_dir" --args="$gn_args"
     ninja -C "$build_dir" "$target_name"
+
+    # Copy output to artifacts
+    mkdir -p "$OUTPUT_DIR/libs/$platform/$arch"
+    cp "$build_dir/obj/v8_monolith.a" "$OUTPUT_DIR/libs/$platform/$arch/v8_monolith.a"
 }
 
-# Platforms to build
-# macOS: x64, arm64 (JIT: true)
+if [ -n "$PLATFORM" ] && [ -n "$ARCH" ] && [ "$PLATFORM" != "bundle" ]; then
+    # Build single platform/architecture
+    build_v8 "$PLATFORM" "$ARCH" "$JIT_ENABLED"
+    
+    # Export headers if requested or for first arch
+    if [ "$PLATFORM" = "macos" ] && [ "$ARCH" = "arm64" ]; then
+        echo "Exporting headers..."
+        mkdir -p "$OUTPUT_DIR/include"
+        cp -R include/* "$OUTPUT_DIR/include/"
+    fi
+    exit 0
+fi
+
+if [ "$PLATFORM" = "bundle" ]; then
+    # Create fat binaries and XCFramework
+    echo "Creating fat binaries and XCFramework from pre-built libraries..."
+
+    mkdir -p "$OUTPUT_DIR/libs-final/macos"
+    mkdir -p "$OUTPUT_DIR/libs-final/ios"
+    mkdir -p "$OUTPUT_DIR/libs-final/ios-simulator"
+
+    # macOS Fat
+    lipo -create \
+        "$OUTPUT_DIR/libs/macos/x64/v8_monolith.a" \
+        "$OUTPUT_DIR/libs/macos/arm64/v8_monolith.a" \
+        -output "$OUTPUT_DIR/libs-final/macos/v8_monolith.a"
+
+    # iOS (arm64 only)
+    cp "$OUTPUT_DIR/libs/ios/arm64/v8_monolith.a" "$OUTPUT_DIR/libs-final/ios/v8_monolith.a"
+
+    # iOS Simulator Fat
+    lipo -create \
+        "$OUTPUT_DIR/libs/ios-simulator/x64/v8_monolith.a" \
+        "$OUTPUT_DIR/libs/ios-simulator/arm64/v8_monolith.a" \
+        -output "$OUTPUT_DIR/libs-final/ios-simulator/v8_monolith.a"
+
+    # Headers should already be in $OUTPUT_DIR/include
+    if [ ! -d "$OUTPUT_DIR/include" ]; then
+         echo "Exporting headers..."
+         mkdir -p "$OUTPUT_DIR/include"
+         cp -R include/* "$OUTPUT_DIR/include/"
+    fi
+
+    # Create XCFramework
+    rm -rf "$OUTPUT_DIR/XScriptV8.xcframework"
+    xcodebuild -create-xcframework \
+        -library "$OUTPUT_DIR/libs-final/macos/v8_monolith.a" \
+        -headers "$OUTPUT_DIR/include" \
+        -library "$OUTPUT_DIR/libs-final/ios/v8_monolith.a" \
+        -headers "$OUTPUT_DIR/include" \
+        -library "$OUTPUT_DIR/libs-final/ios-simulator/v8_monolith.a" \
+        -headers "$OUTPUT_DIR/include" \
+        -output "$OUTPUT_DIR/XScriptV8.xcframework"
+
+    echo "XCFramework created at $OUTPUT_DIR/XScriptV8.xcframework"
+
+    cd "$OUTPUT_DIR"
+    zip -q -r XScriptV8.xcframework.zip XScriptV8.xcframework
+    echo "Zipped XCFramework to $OUTPUT_DIR/XScriptV8.xcframework.zip"
+    exit 0
+fi
+
+# Sequential fallback
 build_v8 macos x64 true
 build_v8 macos arm64 true
-
-# iOS: arm64 (JIT: false)
 build_v8 ios arm64 false
-
-# iOS Simulator: x64, arm64 (JIT: false)
 build_v8 ios-simulator x64 false
 build_v8 ios-simulator arm64 false
 
-# Create fat binaries and XCFramework
-echo "Creating fat binaries and XCFramework..."
-
-mkdir -p "$OUTPUT_DIR/libs/macos"
-mkdir -p "$OUTPUT_DIR/libs/ios"
-mkdir -p "$OUTPUT_DIR/libs/ios-simulator"
-
-# macOS Fat
-lipo -create \
-    "out/macos.x64.release/obj/v8_monolith.a" \
-    "out/macos.arm64.release/obj/v8_monolith.a" \
-    -output "$OUTPUT_DIR/libs/macos/v8_monolith.a"
-
-# iOS (arm64 only)
-cp "out/ios.arm64.release/obj/v8_monolith.a" "$OUTPUT_DIR/libs/ios/v8_monolith.a"
-
-# iOS Simulator Fat
-lipo -create \
-    "out/ios-simulator.x64.release/obj/v8_monolith.a" \
-    "out/ios-simulator.arm64.release/obj/v8_monolith.a" \
-    -output "$OUTPUT_DIR/libs/ios-simulator/v8_monolith.a"
-
-# Prepare Headers
-mkdir -p "$OUTPUT_DIR/include"
-cp -R include/* "$OUTPUT_DIR/include/"
-
-# Create XCFramework
-rm -rf "$OUTPUT_DIR/XScriptV8.xcframework"
-xcodebuild -create-xcframework \
-    -library "$OUTPUT_DIR/libs/macos/v8_monolith.a" \
-    -headers "$OUTPUT_DIR/include" \
-    -library "$OUTPUT_DIR/libs/ios/v8_monolith.a" \
-    -headers "$OUTPUT_DIR/include" \
-    -library "$OUTPUT_DIR/libs/ios-simulator/v8_monolith.a" \
-    -headers "$OUTPUT_DIR/include" \
-    -output "$OUTPUT_DIR/XScriptV8.xcframework"
-
-echo "XCFramework created at $OUTPUT_DIR/XScriptV8.xcframework"
-
-cd "$OUTPUT_DIR"
-zip -r XScriptV8.xcframework.zip XScriptV8.xcframework
-echo "Zipped XCFramework to $OUTPUT_DIR/XScriptV8.xcframework.zip"
+$0 "$V8_VERSION" bundle

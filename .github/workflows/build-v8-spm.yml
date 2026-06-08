@@ -13,9 +13,28 @@ on:
       - "spm-v*"
 
 jobs:
-  build:
-    name: Build V8 Apple XCFramework
+  build-v8-libs:
+    name: Build V8 for ${{ matrix.platform }} ${{ matrix.arch }}
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            arch: x64
+            jit: true
+          - platform: macos
+            arch: arm64
+            jit: true
+          - platform: ios
+            arch: arm64
+            jit: false
+          - platform: ios-simulator
+            arch: x64
+            jit: false
+          - platform: ios-simulator
+            arch: arm64
+            jit: false
 
     steps:
       - name: Checkout project
@@ -26,10 +45,66 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build XCFramework
+      - name: Cache depot_tools
+        uses: actions/cache@v4
+        with:
+          path: v8-apple-build/depot_tools
+          key: depot-tools-apple-${{ runner.os }}-v1
+
+      - name: Build Library
         run: |
           chmod +x scripts/build-v8-apple.sh
-          ./scripts/build-v8-apple.sh ${{ github.event.inputs.version || '15.1.44' }}
+          ./scripts/build-v8-apple.sh ${{ github.event.inputs.version || '15.1.44' }} ${{ matrix.platform }} ${{ matrix.arch }} ${{ matrix.jit }}
+
+      - name: Upload Library Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-lib-${{ matrix.platform }}-${{ matrix.arch }}
+          path: artifacts/v8-spm/libs/${{ matrix.platform }}/${{ matrix.arch }}/v8_monolith.a
+
+      - name: Upload Headers Artifact
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-headers-apple
+          path: artifacts/v8-spm/include/
+
+  bundle-xcframework:
+    name: Bundle V8 Apple XCFramework
+    needs: build-v8-libs
+    runs-on: macos-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Download all libraries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/v8-spm/libs-raw/
+          pattern: v8-lib-*
+
+      - name: Download headers
+        uses: actions/download-artifact@v4
+        with:
+          name: v8-headers-apple
+          path: artifacts/v8-spm/include/
+
+      - name: Bundle XCFramework
+        run: |
+          mkdir -p artifacts/v8-spm/libs/macos/x64
+          mkdir -p artifacts/v8-spm/libs/macos/arm64
+          mkdir -p artifacts/v8-spm/libs/ios/arm64
+          mkdir -p artifacts/v8-spm/libs/ios-simulator/x64
+          mkdir -p artifacts/v8-spm/libs/ios-simulator/arm64
+          
+          cp artifacts/v8-spm/libs-raw/v8-lib-macos-x64/v8_monolith.a artifacts/v8-spm/libs/macos/x64/
+          cp artifacts/v8-spm/libs-raw/v8-lib-macos-arm64/v8_monolith.a artifacts/v8-spm/libs/macos/arm64/
+          cp artifacts/v8-spm/libs-raw/v8-lib-ios-arm64/v8_monolith.a artifacts/v8-spm/libs/ios/arm64/
+          cp artifacts/v8-spm/libs-raw/v8-lib-ios-simulator-x64/v8_monolith.a artifacts/v8-spm/libs/ios-simulator/x64/
+          cp artifacts/v8-spm/libs-raw/v8-lib-ios-simulator-arm64/v8_monolith.a artifacts/v8-spm/libs/ios-simulator/arm64/
+
+          chmod +x scripts/build-v8-apple.sh
+          ./scripts/build-v8-apple.sh ${{ github.event.inputs.version || '15.1.44' }} bundle
 
       - name: Upload XCFramework
         uses: actions/upload-artifact@v4
@@ -45,7 +120,3 @@ jobs:
             artifacts/v8-spm/XScriptV8.xcframework.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    # Note: For production use, you should zip the xcframework and host it somewhere,
-    # then update Package.swift to use a remote binaryTarget with a checksum.
-    # For now, this builds it and makes it available.
