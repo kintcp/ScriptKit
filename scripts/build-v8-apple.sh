@@ -24,7 +24,9 @@ export PATH="$DEPOT_TOOLS:$PATH"
 cd "$WORKDIR"
 if [ ! -d "$V8_DIR" ]; then
     echo "Fetching V8..."
-    fetch v8
+    fetch --nohooks v8
+    echo "target_os = ['ios', 'mac']" >> .gclient
+    gclient sync
 fi
 
 cd "$V8_DIR"
@@ -58,6 +60,8 @@ build_v8() {
         use_allocator_shim=false \
         use_partition_alloc_as_malloc=false \
         enable_ios_bitcode=false \
+        ios_enable_code_signing=false \
+        ios_code_signing_identity="" \
         $jit_flag"
         
     case $platform in
