@@ -1,0 +1,61 @@
+name: Build X.Script.QuickJS Android AAR
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "QuickJS git ref, tag, branch, or commit"
+        required: true
+        default: "master"
+
+  push:
+    tags:
+      - "quickjs-aar-v*"
+
+jobs:
+  build:
+    name: Build QuickJS Android AAR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip unzip
+
+      - name: Install NDK
+        run: |
+          echo "y" | sdkmanager "ndk;25.2.9519653"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
+
+      - name: Build AAR
+        run: |
+          chmod +x scripts/build-quickjs-android.sh
+          ./scripts/build-quickjs-android.sh ${{ github.event.inputs.version || 'master' }}
+
+      - name: Upload AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: XScriptQuickJS-AAR
+          path: artifacts/quickjs-android/XScriptQuickJS.aar
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/quickjs-aar-v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/quickjs-android/XScriptQuickJS.aar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
