@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "V8 version"
+        description: "V8 version (tag or branch)"
         required: true
         default: "15.1.44"
 
@@ -13,9 +13,21 @@ on:
       - "aar-v*"
 
 jobs:
-  build:
-    name: Build V8 Android AAR
+  build-v8-libs:
+    name: Build V8 for ${{ matrix.android_abi }}
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_cpu: arm
+            android_abi: armeabi-v7a
+          - target_cpu: arm64
+            android_abi: arm64-v8a
+          - target_cpu: x86
+            android_abi: x86
+          - target_cpu: x64
+            android_abi: x86_64
 
     steps:
       - name: Checkout project
@@ -37,10 +49,64 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config zip
 
-      - name: Build AAR
+      - name: Cache depot_tools
+        uses: actions/cache@v4
+        with:
+          path: v8-android-build/depot_tools
+          key: depot-tools-android-${{ runner.os }}-v1
+
+      - name: Build Library
         run: |
           chmod +x scripts/build-v8-android.sh
-          ./scripts/build-v8-android.sh ${{ github.event.inputs.version || '15.1.44' }}
+          ./scripts/build-v8-android.sh ${{ github.event.inputs.version || '15.1.44' }} ${{ matrix.target_cpu }} ${{ matrix.android_abi }}
+
+      - name: Upload Library Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-lib-${{ matrix.android_abi }}
+          path: artifacts/v8-android/libs/${{ matrix.android_abi }}/libv8.a
+
+      - name: Upload Headers Artifact
+        if: matrix.target_cpu == 'arm64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-headers
+          path: artifacts/v8-android/include/
+
+  bundle-aar:
+    name: Bundle V8 Android AAR
+    needs: build-v8-libs
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Download all libraries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/v8-android/libs-raw/
+          pattern: v8-lib-*
+
+      - name: Download headers
+        uses: actions/download-artifact@v4
+        with:
+          name: v8-headers
+          path: artifacts/v8-android/include/
+
+      - name: Bundle AAR
+        run: |
+          mkdir -p artifacts/v8-android/libs/armeabi-v7a
+          mkdir -p artifacts/v8-android/libs/arm64-v8a
+          mkdir -p artifacts/v8-android/libs/x86
+          mkdir -p artifacts/v8-android/libs/x86_64
+          
+          cp artifacts/v8-android/libs-raw/v8-lib-armeabi-v7a/libv8.a artifacts/v8-android/libs/armeabi-v7a/
+          cp artifacts/v8-android/libs-raw/v8-lib-arm64-v8a/libv8.a artifacts/v8-android/libs/arm64-v8a/
+          cp artifacts/v8-android/libs-raw/v8-lib-x86/libv8.a artifacts/v8-android/libs/x86/
+          cp artifacts/v8-android/libs-raw/v8-lib-x86_64/libv8.a artifacts/v8-android/libs/x86_64/
+
+          chmod +x scripts/build-v8-android.sh
+          ./scripts/build-v8-android.sh ${{ github.event.inputs.version || '15.1.44' }} bundle
 
       - name: Upload AAR
         uses: actions/upload-artifact@v4
