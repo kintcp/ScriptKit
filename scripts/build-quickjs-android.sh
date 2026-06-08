@@ -60,6 +60,7 @@ build_quickjs() {
         -DNDEBUG
         -D_GNU_SOURCE
         -DCONFIG_BIGNUM
+        "-DCONFIG_VERSION=\"$VERSION\""
         -fPIC
         -fvisibility=hidden
         -Wall
