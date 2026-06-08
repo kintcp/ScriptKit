@@ -20,27 +20,12 @@ if [ ! -d "$DEPOT_TOOLS" ]; then
 fi
 export PATH="$DEPOT_TOOLS:$PATH"
 
-# Setup .gclient for Android
+# Fetch V8 and setup Android target
 cd "$WORKDIR"
-if [ ! -f ".gclient" ]; then
-    echo "Configuring gclient for Android target..."
-    cat > .gclient <<EOF
-solutions = [
-  {
-    "name": "v8",
-    "url": "https://chromium.googlesource.com/v8/v8.git",
-    "deps_file": "DEPS",
-    "managed": False,
-    "custom_deps": {},
-  },
-]
-target_os = ["android"]
-EOF
-fi
-
 if [ ! -d "$V8_DIR" ]; then
     echo "Fetching V8..."
     fetch --nohooks v8
+    echo "target_os = ['android']" >> .gclient
 fi
 
 cd "$V8_DIR"
