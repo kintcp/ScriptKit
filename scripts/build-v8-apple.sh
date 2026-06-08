@@ -48,7 +48,7 @@ build_v8() {
     
     local build_dir="out/${platform}.${arch}.release"
     
-    local jit_flag="v8_jitless=true"
+    local jit_flag="v8_jitless=true v8_enable_sparkplug=false v8_enable_maglev=false v8_enable_turbofan=false v8_enable_webassembly=false"
     if [ "$jit_enabled" = "true" ]; then
         jit_flag="v8_jitless=false"
     fi
@@ -64,6 +64,7 @@ build_v8() {
         use_custom_libcxx=false \
         use_allocator_shim=false \
         use_partition_alloc_as_malloc=false \
+        use_remoteexec=false \
         enable_ios_bitcode=false \
         ios_enable_code_signing=false \
         ios_code_signing_identity=\"\" \
@@ -77,7 +78,7 @@ build_v8() {
             gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"device\" ios_deployment_target=\"13.0\""
             ;;
         ios-simulator)
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" use_remoteexec=false target_environment=\"simulator\" ios_deployment_target=\"13.0\""
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"simulator\" ios_deployment_target=\"13.0\""
             ;;
     esac
 
@@ -87,7 +88,7 @@ build_v8() {
 
     # Copy output to artifacts
     mkdir -p "$OUTPUT_DIR/libs/$platform/$arch"
-    cp "$build_dir/obj/v8_monolith.a" "$OUTPUT_DIR/libs/$platform/$arch/v8_monolith.a"
+    cp "$build_dir/obj/libv8_monolith.a" "$OUTPUT_DIR/libs/$platform/$arch/v8_monolith.a"
 }
 
 if [ -n "$PLATFORM" ] && [ -n "$ARCH" ] && [ "$PLATFORM" != "bundle" ]; then
