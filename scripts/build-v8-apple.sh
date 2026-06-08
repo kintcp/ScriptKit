@@ -65,14 +65,14 @@ build_v8() {
             gn_args="$gn_args target_os=\"mac\" target_cpu=\"$arch\""
             ;;
         ios)
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" ios_deployment_target=\"13.0\""
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"device\" ios_deployment_target=\"13.0\""
             ;;
         ios-simulator)
             gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" use_remoteexec=false target_environment=\"simulator\""
             ;;
         tvos)
             # Experimental tvOS support using iOS target
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" ios_deployment_target=\"13.0\""
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"device\" ios_deployment_target=\"13.0\""
             ;;
     esac
 
