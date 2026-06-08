@@ -126,7 +126,7 @@ pack_prefab_abi() {
     local abi_dir="$PREFAB_DIR/modules/v8/libs/android.$android_abi"
     
     mkdir -p "$abi_dir"
-    cp "out/android.${target_cpu}.release/obj/v8_monolith.a" "$abi_dir/libv8.a"
+    cp "out/android.${target_cpu}.release/obj/libv8_monolith.a" "$abi_dir/libv8.a"
     
     cat > "$abi_dir/abi.json" <<EOF
 {
