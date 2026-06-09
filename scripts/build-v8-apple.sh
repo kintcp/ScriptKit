@@ -166,7 +166,7 @@ if [ "$PLATFORM" = "bundle" ]; then
     fi
 
     # Create XCFramework
-    rm -rf "$OUTPUT_DIR/XScriptV8.xcframework"
+    rm -rf "$OUTPUT_DIR/X.Script.V8.xcframework"
     xcodebuild -create-xcframework \
         -library "$OUTPUT_DIR/libs-final/macos/v8_monolith.a" \
         -headers "$OUTPUT_DIR/include" \
@@ -182,13 +182,13 @@ if [ "$PLATFORM" = "bundle" ]; then
         -headers "$OUTPUT_DIR/include" \
         -library "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a" \
         -headers "$OUTPUT_DIR/include" \
-        -output "$OUTPUT_DIR/XScriptV8.xcframework"
+        -output "$OUTPUT_DIR/X.Script.V8.xcframework"
 
-    echo "XCFramework created at $OUTPUT_DIR/XScriptV8.xcframework"
+    echo "XCFramework created at $OUTPUT_DIR/X.Script.V8.xcframework"
 
     cd "$OUTPUT_DIR"
-    zip -q -r XScriptV8.xcframework.zip XScriptV8.xcframework
-    echo "Zipped XCFramework to $OUTPUT_DIR/XScriptV8.xcframework.zip"
+    zip -q -r X.Script.V8.xcframework.zip X.Script.V8.xcframework
+    echo "Zipped XCFramework to $OUTPUT_DIR/X.Script.V8.xcframework.zip"
     exit 0
 fi
 

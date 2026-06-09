@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "XScriptV8",
+    name: "X.Script.V8",
     platforms: [
         .macOS(.v10_15),
         .iOS(.v13),
@@ -11,20 +11,20 @@ let package = Package(
     ],
     products: [
         .library(
-            name: "XScriptV8",
-            targets: ["XScriptV8"]),
+            name: "X.Script.V8",
+            targets: ["X.Script.V8"]),
         .library(
-            name: "XScriptQuickJS",
-            targets: ["XScriptQuickJS"]),
+            name: "X.Script.QuickJS",
+            targets: ["X.Script.QuickJS"]),
     ],
     targets: [
         .binaryTarget(
-            name: "XScriptV8",
-            path: "XScriptV8.xcframework"
+            name: "X.Script.V8",
+            path: "X.Script.V8.xcframework"
         ),
         .binaryTarget(
-            name: "XScriptQuickJS",
-            path: "XScriptQuickJS.xcframework"
+            name: "X.Script.QuickJS",
+            path: "X.Script.QuickJS.xcframework"
         )
     ]
 )

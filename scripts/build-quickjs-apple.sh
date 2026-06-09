@@ -79,7 +79,7 @@ build_quickjs() {
     local cc="clang"
     local ar="ar"
     
-    local cflags="-O3 -D_GNU_SOURCE -DCONFIG_VERSION=\"$(cat VERSION)\" -target $target -isysroot $sdk_path -fembed-bitcode-marker"
+    local cflags="-O3 -D_GNU_SOURCE -D_DARWIN_C_SOURCE -DCONFIG_VERSION=\"$(cat VERSION)\" -DCONFIG_BIGNUM -target $target -isysroot $sdk_path -fembed-bitcode-marker"
     
     echo "Building QuickJS for $platform $arch ($target)..."
     
@@ -92,6 +92,11 @@ build_quickjs() {
         "quickjs-libc.c"
         "libbf.c"
     )
+
+    # Check for optional but recommended files
+    if [ -f "qjscalc.c" ]; then
+        sources+=("qjscalc.c")
+    fi
     
     local objects=()
     for src in "${sources[@]}"; do
@@ -172,7 +177,7 @@ if [ "$PLATFORM" = "bundle" ]; then
     fi
 
     # Create XCFramework
-    rm -rf "$OUTPUT_DIR/XScriptQuickJS.xcframework"
+    rm -rf "$OUTPUT_DIR/X.Script.QuickJS.xcframework"
     xcodebuild -create-xcframework \
         -library "$OUTPUT_DIR/libs-final/macos/libquickjs.a" \
         -headers "$OUTPUT_DIR/include" \
@@ -188,12 +193,12 @@ if [ "$PLATFORM" = "bundle" ]; then
         -headers "$OUTPUT_DIR/include" \
         -library "$OUTPUT_DIR/libs-final/visionos-simulator/libquickjs.a" \
         -headers "$OUTPUT_DIR/include" \
-        -output "$OUTPUT_DIR/XScriptQuickJS.xcframework"
+        -output "$OUTPUT_DIR/X.Script.QuickJS.xcframework"
 
-    echo "XCFramework created at $OUTPUT_DIR/XScriptQuickJS.xcframework"
+    echo "XCFramework created at $OUTPUT_DIR/X.Script.QuickJS.xcframework"
 
     cd "$OUTPUT_DIR"
-    zip -q -r XScriptQuickJS.xcframework.zip XScriptQuickJS.xcframework
+    zip -q -r X.Script.QuickJS.xcframework.zip X.Script.QuickJS.xcframework
     exit 0
 fi
 
