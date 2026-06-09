@@ -25,20 +25,26 @@ cd "$QUICKJS_DIR"
 git fetch origin
 git checkout "$QUICKJS_VERSION"
 
-# Patch QuickJS for Apple restricted platforms (tvOS, visionOS, iOS)
-# Prohibited functions: execve, system, fork, etc.
-echo "Patching quickjs-libc.c for Apple restricted platforms..."
-# Use perl for more robust regex handling than sed
-perl -pi -e 's/return\s+execve\s*\(.*?\);/return -1;/g' quickjs-libc.c
-perl -pi -e 's/\bexecve\s*\(.*?\);/-1;/g' quickjs-libc.c
-perl -pi -e 's/\bsystem\s*\(.*?\)/(-1)/g' quickjs-libc.c
-perl -pi -e 's/\bfork\s*\(\)/(-1)/g' quickjs-libc.c
-perl -pi -e 's/\bwaitpid\s*\(.*?\)/(-1)/g' quickjs-libc.c
-
 # Build function
 build_quickjs() {
     local platform=$1
     local arch=$2
+    
+    # Patch QuickJS for Apple restricted platforms (tvOS, visionOS, iOS)
+    # Prohibited functions: execve, system, fork, etc.
+    if [ "$platform" != "macos" ]; then
+        echo "Patching quickjs-libc.c for $platform..."
+        # Use perl for more robust regex handling than sed
+        # We use a backup to allow easy restoration if needed, but in CI it's clean every time
+        perl -pi -e 's/return\s+execve\s*\(.*?\);/return -1;/g' quickjs-libc.c
+        perl -pi -e 's/\bexecve\s*\(.*?\);/-1;/g' quickjs-libc.c
+        perl -pi -e 's/\bsystem\s*\(.*?\)/(-1)/g' quickjs-libc.c
+        perl -pi -e 's/\bfork\s*\(\)/(-1)/g' quickjs-libc.c
+        perl -pi -e 's/\bwaitpid\s*\(.*?\)/(-1)/g' quickjs-libc.c
+    else
+        echo "Restoring quickjs-libc.c for $platform..."
+        git checkout quickjs-libc.c
+    fi
     
     local build_dir="$WORKDIR/out/${platform}.${arch}"
     mkdir -p "$build_dir"
