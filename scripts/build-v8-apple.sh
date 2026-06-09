@@ -165,6 +165,22 @@ if [ "$PLATFORM" = "bundle" ]; then
     # visionOS Simulator (arm64 only)
     cp "$OUTPUT_DIR/libs/visionos-simulator/arm64/v8_monolith.a" "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a"
 
+    # Fix Mach-O platform IDs for tvOS and visionOS to help xcodebuild distinguish them
+    # Platforms: 1=iOS, 3=tvOS, 4=watchOS, 6=tvOS Simulator, 11=visionOS, 12=visionOS Simulator
+    echo "Correcting Mach-O platform IDs..."
+    if [ -f "$OUTPUT_DIR/libs-final/tvos/v8_monolith.a" ]; then
+        xcrun vtool -set-build-version 3 13.0 13.0 -replace -output "$OUTPUT_DIR/libs-final/tvos/v8_monolith.a" "$OUTPUT_DIR/libs-final/tvos/v8_monolith.a" || echo "vtool failed for tvos"
+    fi
+    if [ -f "$OUTPUT_DIR/libs-final/tvos-simulator/v8_monolith.a" ]; then
+        xcrun vtool -set-build-version 6 13.0 13.0 -replace -output "$OUTPUT_DIR/libs-final/tvos-simulator/v8_monolith.a" "$OUTPUT_DIR/libs-final/tvos-simulator/v8_monolith.a" || echo "vtool failed for tvos-sim"
+    fi
+    if [ -f "$OUTPUT_DIR/libs-final/visionos/v8_monolith.a" ]; then
+        xcrun vtool -set-build-version 11 1.0 1.0 -replace -output "$OUTPUT_DIR/libs-final/visionos/v8_monolith.a" "$OUTPUT_DIR/libs-final/visionos/v8_monolith.a" || echo "vtool failed for visionos"
+    fi
+    if [ -f "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a" ]; then
+        xcrun vtool -set-build-version 12 1.0 1.0 -replace -output "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a" "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a" || echo "vtool failed for visionos-sim"
+    fi
+
     # Headers should already be in $OUTPUT_DIR/include
     if [ ! -d "$OUTPUT_DIR/include" ]; then
          echo "Exporting headers..."
