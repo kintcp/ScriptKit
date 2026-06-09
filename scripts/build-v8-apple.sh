@@ -28,7 +28,7 @@ export PATH="$DEPOT_TOOLS:$PATH"
 cd "$WORKDIR"
 if [ ! -d "$V8_DIR" ]; then
     echo "Fetching V8..."
-    fetch --nohooks v8
+    fetch --no-history --nohooks v8
     echo "target_os = ['ios', 'mac']" >> .gclient
 fi
 
