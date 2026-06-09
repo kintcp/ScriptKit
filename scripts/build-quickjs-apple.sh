@@ -28,13 +28,12 @@ git checkout "$QUICKJS_VERSION"
 # Patch QuickJS for Apple restricted platforms (tvOS, visionOS, iOS)
 # Prohibited functions: execve, system, fork, etc.
 echo "Patching quickjs-libc.c for Apple restricted platforms..."
-sed -i.bak 's/\breturn execve/return -1; \/\/ execve/g' quickjs-libc.c
-sed -i.bak 's/\bexecve(/(-1); \/\/ execve(/g' quickjs-libc.c
-sed -i.bak 's/\bsystem(str)/-1/g' quickjs-libc.c
-sed -i.bak 's/\bsystem(command)/-1/g' quickjs-libc.c
-# Some versions of QuickJS use fork() and waitpid()
-sed -i.bak 's/\bfork()/(-1)/g' quickjs-libc.c
-sed -i.bak 's/\bwaitpid(/(-1); \/\/ waitpid(/g' quickjs-libc.c
+# Use perl for more robust regex handling than sed
+perl -pi -e 's/return\s+execve\s*\(.*?\);/return -1;/g' quickjs-libc.c
+perl -pi -e 's/\bexecve\s*\(.*?\);/-1;/g' quickjs-libc.c
+perl -pi -e 's/\bsystem\s*\(.*?\)/(-1)/g' quickjs-libc.c
+perl -pi -e 's/\bfork\s*\(\)/(-1)/g' quickjs-libc.c
+perl -pi -e 's/\bwaitpid\s*\(.*?\)/(-1)/g' quickjs-libc.c
 
 # Build function
 build_quickjs() {
