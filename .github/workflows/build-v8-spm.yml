@@ -1,4 +1,4 @@
-name: Build XScriptV8 SPM
+name: Build X.Script.V8 SPM
 
 on:
   workflow_dispatch:
