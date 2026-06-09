@@ -204,7 +204,7 @@ EOF
 {
   "abi": "$android_abi",
   "api": 21,
-  "ndk": 25,
+  "ndk": 27,
   "stl": "c++_shared"
 }
 EOF

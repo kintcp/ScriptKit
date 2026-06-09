@@ -12,6 +12,9 @@ on:
     tags:
       - "aar-v*"
 
+env:
+  ANDROID_NDK_VERSION: "27.2.12479018"
+
 jobs:
   build-v8-libs:
     name: Build V8 for ${{ matrix.android_abi }}
@@ -49,14 +52,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config zip
 
-      - name: Setup Android SDK
+      - name: Setup Android SDK Tools
         uses: android-actions/setup-android@v3
 
-      - name: Setup Android NDK
+      - name: Install Android NDK 27
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;25.1.8937393"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.1.8937393" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/25.1.8937393" >> "$GITHUB_ENV"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ANDROID_NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
 
       - name: Cache depot_tools
         uses: actions/cache@v4
