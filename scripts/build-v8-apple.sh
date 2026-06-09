@@ -70,6 +70,8 @@ build_v8() {
         v8_monolithic=true \
         v8_use_external_startup_data=false \
         v8_enable_i18n_support=true \
+        v8_enable_temporal_support=false \
+        enable_rust=false \
         v8_enable_sandbox=false \
         treat_warnings_as_errors=false \
         symbol_level=0 \
