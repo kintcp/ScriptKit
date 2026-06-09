@@ -39,6 +39,18 @@ git checkout "$V8_VERSION"
 echo "Running gclient sync..."
 gclient sync -D --no-history --shallow
 
+# Patch V8 build configuration for tvOS/visionOS
+echo "Patching V8 build configuration for tvOS/visionOS..."
+# 1. Disable strict target_environment assertion
+sed -i '' 's/assert(filter_include(\[ target_environment \], _target_environments) != \[\]/assert(true || filter_include(\[ target_environment \], _target_environments) != \[\]/g' build/config/apple/mobile_config.gni || echo "Patch 1 failed"
+
+# 2. Make deployment target flags dynamic based on ios_sdk_name
+# This ensures tvos gets -mappletvos and visionos gets -mvisionos
+sed -i '' 's/"-miphoneos-version-min=/"-m${ios_sdk_name}-version-min=/g' build/config/apple/mobile_config.gni || echo "Patch 2 failed"
+sed -i '' 's/"-miphonesimulator-version-min=/"-m${ios_sdk_name}-version-min=/g' build/config/apple/mobile_config.gni || echo "Patch 3 failed"
+# Special case: visionos sdk is xros but flag is -mvisionos-version-min
+sed -i '' 's/\${ios_sdk_name}-version-min/$(if [[ "${ios_sdk_name}" == "xros" || "${ios_sdk_name}" == "xrsimulator" ]]; then echo "visionos"; else echo "${ios_sdk_name}"; fi)-version-min/g' build/config/apple/mobile_config.gni || echo "Patch 4 failed"
+
 # Build function
 build_v8() {
     local platform=$1
@@ -165,22 +177,6 @@ if [ "$PLATFORM" = "bundle" ]; then
     # visionOS Simulator (arm64 only)
     cp "$OUTPUT_DIR/libs/visionos-simulator/arm64/v8_monolith.a" "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a"
 
-    # Fix Mach-O platform IDs for tvOS and visionOS to help xcodebuild distinguish them
-    # Platforms: 1=iOS, 3=tvOS, 4=watchOS, 6=tvOS Simulator, 11=visionOS, 12=visionOS Simulator
-    echo "Correcting Mach-O platform IDs..."
-    if [ -f "$OUTPUT_DIR/libs-final/tvos/v8_monolith.a" ]; then
-        xcrun vtool -set-build-version 3 13.0 13.0 -replace -output "$OUTPUT_DIR/libs-final/tvos/v8_monolith.a" "$OUTPUT_DIR/libs-final/tvos/v8_monolith.a" || echo "vtool failed for tvos"
-    fi
-    if [ -f "$OUTPUT_DIR/libs-final/tvos-simulator/v8_monolith.a" ]; then
-        xcrun vtool -set-build-version 6 13.0 13.0 -replace -output "$OUTPUT_DIR/libs-final/tvos-simulator/v8_monolith.a" "$OUTPUT_DIR/libs-final/tvos-simulator/v8_monolith.a" || echo "vtool failed for tvos-sim"
-    fi
-    if [ -f "$OUTPUT_DIR/libs-final/visionos/v8_monolith.a" ]; then
-        xcrun vtool -set-build-version 11 1.0 1.0 -replace -output "$OUTPUT_DIR/libs-final/visionos/v8_monolith.a" "$OUTPUT_DIR/libs-final/visionos/v8_monolith.a" || echo "vtool failed for visionos"
-    fi
-    if [ -f "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a" ]; then
-        xcrun vtool -set-build-version 12 1.0 1.0 -replace -output "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a" "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a" || echo "vtool failed for visionos-sim"
-    fi
-
     # Headers should already be in $OUTPUT_DIR/include
     if [ ! -d "$OUTPUT_DIR/include" ]; then
          echo "Exporting headers..."
@@ -191,7 +187,7 @@ if [ "$PLATFORM" = "bundle" ]; then
     # Create XCFramework
     rm -rf "$OUTPUT_DIR/X.Script.V8.xcframework"
     
-    local xcode_cmd="xcodebuild -create-xcframework"
+    xcode_cmd="xcodebuild -create-xcframework"
     
     # Add each built library if it exists
     for p in "macos" "ios" "ios-simulator" "tvos" "tvos-simulator" "visionos" "visionos-simulator"; do
