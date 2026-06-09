@@ -81,16 +81,16 @@ build_v8() {
             gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"simulator\" ios_deployment_target=\"13.0\""
             ;;
         tvos)
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" ios_sdk_name=\"appletvos\" ios_deployment_target=\"13.0\""
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"device\" ios_sdk_name=\"appletvos\" ios_deployment_target=\"13.0\""
             ;;
         tvos-simulator)
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" ios_sdk_name=\"appletvsimulator\" ios_deployment_target=\"13.0\""
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"simulator\" ios_sdk_name=\"appletvsimulator\" ios_deployment_target=\"13.0\""
             ;;
         visionos)
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" ios_sdk_name=\"xros\" ios_deployment_target=\"1.0\""
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"device\" ios_sdk_name=\"xros\" ios_deployment_target=\"1.0\""
             ;;
         visionos-simulator)
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" ios_sdk_name=\"xrsimulator\" ios_deployment_target=\"1.0\""
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"simulator\" ios_sdk_name=\"xrsimulator\" ios_deployment_target=\"1.0\""
             ;;
     esac
 
