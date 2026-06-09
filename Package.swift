@@ -5,9 +5,7 @@ let package = Package(
     name: "X.Script.V8",
     platforms: [
         .macOS(.v10_15),
-        .iOS(.v13),
-        .tvOS(.v13),
-        .visionOS(.v1)
+        .iOS(.v13)
     ],
     products: [
         .library(

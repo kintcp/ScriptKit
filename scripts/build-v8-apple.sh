@@ -39,95 +39,6 @@ git checkout "$V8_VERSION"
 echo "Running gclient sync..."
 gclient sync -D --no-history --shallow
 
-patch_v8_apple_build_config() {
-    echo "Patching V8 build configuration for tvOS/visionOS..."
-    python3 - <<'PY'
-from pathlib import Path
-
-
-def replace_once(path: str, old: str, new: str) -> None:
-    file = Path(path)
-    text = file.read_text()
-    if new in text:
-        return
-    if old not in text:
-        raise SystemExit(f"Patch target not found in {path}")
-    file.write_text(text.replace(old, new, 1))
-
-
-replace_once(
-    "build/config/apple/mobile_config.gni",
-    '''    _target_platforms += [
-      "iphoneos",
-      "tvos",
-    ]
-''',
-    '''    _target_platforms += [
-      "iphoneos",
-      "tvos",
-      "xros",
-    ]
-''',
-)
-
-replace_once(
-    "build/config/ios/BUILD.gn",
-    '''  } else if (target_platform == "tvos") {
-    triplet_os = "apple-tvos"
-  }
-''',
-    '''  } else if (target_platform == "tvos") {
-    triplet_os = "apple-tvos"
-  } else if (target_platform == "xros") {
-    triplet_os = "apple-xros"
-  }
-''',
-)
-
-replace_once(
-    "build/config/ios/ios_sdk.gni",
-    '''  } else if (target_platform == "tvos") {
-    if (target_environment == "simulator") {
-      ios_sdk_name = "appletvsimulator"
-      ios_sdk_platform = "AppleTVSimulator"
-    } else if (target_environment == "device") {
-      ios_sdk_name = "appletvos"
-      ios_sdk_platform = "AppleTVOS"
-    } else {
-      assert(false, "unsupported target_environment=$target_environment")
-    }
-  } else {
-    assert(false, "unsupported target_platform=$target_platform")
-  }
-''',
-    '''  } else if (target_platform == "tvos") {
-    if (target_environment == "simulator") {
-      ios_sdk_name = "appletvsimulator"
-      ios_sdk_platform = "AppleTVSimulator"
-    } else if (target_environment == "device") {
-      ios_sdk_name = "appletvos"
-      ios_sdk_platform = "AppleTVOS"
-    } else {
-      assert(false, "unsupported target_environment=$target_environment")
-    }
-  } else if (target_platform == "xros") {
-    if (target_environment == "simulator") {
-      ios_sdk_name = "xrsimulator"
-      ios_sdk_platform = "XRSimulator"
-    } else if (target_environment == "device") {
-      ios_sdk_name = "xros"
-      ios_sdk_platform = "XROS"
-    } else {
-      assert(false, "unsupported target_environment=$target_environment")
-    }
-  } else {
-    assert(false, "unsupported target_platform=$target_platform")
-  }
-''',
-)
-PY
-}
-
 verify_archive_platform() {
     local platform=$1
     local archive=$2
@@ -136,10 +47,6 @@ verify_archive_platform() {
         macos) expected="MACOS" ;;
         ios) expected="IOS" ;;
         ios-simulator) expected="IOSSIMULATOR" ;;
-        tvos) expected="TVOS" ;;
-        tvos-simulator) expected="TVOSSIMULATOR" ;;
-        visionos) expected="VISIONOS" ;;
-        visionos-simulator) expected="VISIONOSSIMULATOR" ;;
         *) echo "Unknown platform for verification: $platform" >&2; return 1 ;;
     esac
 
@@ -174,8 +81,6 @@ verify_archive_platform() {
     fi
     echo "Verified $platform archive platform: $actual"
 }
-
-patch_v8_apple_build_config
 
 # Build function
 build_v8() {
@@ -220,17 +125,9 @@ build_v8() {
         ios-simulator)
             gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_platform=\"iphoneos\" target_environment=\"simulator\" ios_deployment_target=\"13.0\""
             ;;
-        tvos)
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_platform=\"tvos\" target_environment=\"device\" ios_deployment_target=\"13.0\" use_blink=true"
-            ;;
-        tvos-simulator)
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_platform=\"tvos\" target_environment=\"simulator\" ios_deployment_target=\"13.0\" use_blink=true"
-            ;;
-        visionos)
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_platform=\"xros\" target_environment=\"device\" ios_deployment_target=\"1.0\""
-            ;;
-        visionos-simulator)
-            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_platform=\"xros\" target_environment=\"simulator\" ios_deployment_target=\"1.0\""
+        *)
+            echo "Unsupported V8 Apple platform: $platform" >&2
+            return 1
             ;;
     esac
 
@@ -271,11 +168,6 @@ if [ "$PLATFORM" = "bundle" ]; then
     mkdir -p "$OUTPUT_DIR/libs-final/macos"
     mkdir -p "$OUTPUT_DIR/libs-final/ios"
     mkdir -p "$OUTPUT_DIR/libs-final/ios-simulator"
-    mkdir -p "$OUTPUT_DIR/libs-final/tvos"
-    mkdir -p "$OUTPUT_DIR/libs-final/tvos-simulator"
-    mkdir -p "$OUTPUT_DIR/libs-final/visionos"
-    mkdir -p "$OUTPUT_DIR/libs-final/visionos-simulator"
-
     # macOS Fat
     lipo -create \
         "$OUTPUT_DIR/libs/macos/x64/v8_monolith.a" \
@@ -294,25 +186,6 @@ if [ "$PLATFORM" = "bundle" ]; then
         -output "$OUTPUT_DIR/libs-final/ios-simulator/v8_monolith.a"
     verify_archive_platform ios-simulator "$OUTPUT_DIR/libs-final/ios-simulator/v8_monolith.a"
 
-    # tvOS (arm64 only)
-    cp "$OUTPUT_DIR/libs/tvos/arm64/v8_monolith.a" "$OUTPUT_DIR/libs-final/tvos/v8_monolith.a"
-    verify_archive_platform tvos "$OUTPUT_DIR/libs-final/tvos/v8_monolith.a"
-
-    # tvOS Simulator Fat
-    lipo -create \
-        "$OUTPUT_DIR/libs/tvos-simulator/x64/v8_monolith.a" \
-        "$OUTPUT_DIR/libs/tvos-simulator/arm64/v8_monolith.a" \
-        -output "$OUTPUT_DIR/libs-final/tvos-simulator/v8_monolith.a"
-    verify_archive_platform tvos-simulator "$OUTPUT_DIR/libs-final/tvos-simulator/v8_monolith.a"
-
-    # visionOS (arm64 only)
-    cp "$OUTPUT_DIR/libs/visionos/arm64/v8_monolith.a" "$OUTPUT_DIR/libs-final/visionos/v8_monolith.a"
-    verify_archive_platform visionos "$OUTPUT_DIR/libs-final/visionos/v8_monolith.a"
-
-    # visionOS Simulator (arm64 only)
-    cp "$OUTPUT_DIR/libs/visionos-simulator/arm64/v8_monolith.a" "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a"
-    verify_archive_platform visionos-simulator "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a"
-
     # Headers should already be in $OUTPUT_DIR/include
     if [ ! -d "$OUTPUT_DIR/include" ]; then
          echo "Exporting headers..."
@@ -326,7 +199,7 @@ if [ "$PLATFORM" = "bundle" ]; then
     xcode_cmd="xcodebuild -create-xcframework"
     
     # Add each built library if it exists
-    for p in "macos" "ios" "ios-simulator" "tvos" "tvos-simulator" "visionos" "visionos-simulator"; do
+    for p in "macos" "ios" "ios-simulator"; do
         if [ -f "$OUTPUT_DIR/libs-final/$p/v8_monolith.a" ]; then
             xcode_cmd="$xcode_cmd -library $OUTPUT_DIR/libs-final/$p/v8_monolith.a -headers $OUTPUT_DIR/include"
         fi
