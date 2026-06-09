@@ -165,8 +165,8 @@ EOF
 
     # Zip it all up
     cd "$AAR_DIR"
-    zip -q -r "$OUTPUT_DIR/XScriptV8.aar" .
-    echo "AAR successfully created at $OUTPUT_DIR/XScriptV8.aar"
+    zip -q -r "$OUTPUT_DIR/X.Script.V8.aar" .
+    echo "AAR successfully created at $OUTPUT_DIR/X.Script.V8.aar"
     exit 0
 fi
 

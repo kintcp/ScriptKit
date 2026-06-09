@@ -182,5 +182,5 @@ pack_prefab_abi x86_64
 
 # Zip it all up
 cd "$AAR_DIR"
-zip -q -r "$OUTPUT_DIR/XScriptQuickJS.aar" .
-echo "AAR successfully created at $OUTPUT_DIR/XScriptQuickJS.aar"
+zip -q -r "$OUTPUT_DIR/X.Script.QuickJS.aar" .
+echo "AAR successfully created at $OUTPUT_DIR/X.Script.QuickJS.aar"

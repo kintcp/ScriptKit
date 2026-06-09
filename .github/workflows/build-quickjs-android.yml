@@ -48,14 +48,30 @@ jobs:
       - name: Upload AAR
         uses: actions/upload-artifact@v4
         with:
-          name: XScriptQuickJS-AAR
-          path: artifacts/quickjs-android/XScriptQuickJS.aar
+          name: X.Script.QuickJS-AAR
+          path: artifacts/quickjs-android/X.Script.QuickJS.aar
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/quickjs-aar-v')
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/quickjs-android/XScriptQuickJS.aar
+            artifacts/quickjs-android/X.Script.QuickJS.aar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to Maven Repo (Local)
+        if: startsWith(github.ref, 'refs/tags/quickjs-aar-v')
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG_NAME#quickjs-aar-v}
+          chmod +x scripts/publish-maven.sh
+          ./scripts/publish-maven.sh X.Script.QuickJS "$VERSION" artifacts/quickjs-android/X.Script.QuickJS.aar
+
+      - name: Deploy to GitHub Pages
+        if: startsWith(github.ref, 'refs/tags/quickjs-aar-v')
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: maven-repo
+          clean: false # Don't delete existing versions in the repo
