@@ -58,7 +58,7 @@ build_v8() {
         is_component_build=false \
         v8_monolithic=true \
         v8_use_external_startup_data=false \
-        v8_enable_i18n_support=false \
+        v8_enable_i18n_support=true \
         v8_enable_sandbox=false \
         treat_warnings_as_errors=false \
         symbol_level=0 \
@@ -73,6 +73,13 @@ build_v8() {
     # Copy output to artifacts
     mkdir -p "$OUTPUT_DIR/libs/$android_abi"
     cp "$build_dir/obj/libv8_monolith.a" "$OUTPUT_DIR/libs/$android_abi/libv8.a"
+    
+    # Copy ICU libraries if they exist separately (sometimes they are not merged into monolith)
+    for lib in "libicuuc.a" "libicui18n.a"; do
+        if [ -f "$build_dir/obj/third_party/icu/$lib" ]; then
+            cp "$build_dir/obj/third_party/icu/$lib" "$OUTPUT_DIR/libs/$android_abi/$lib"
+        fi
+    done
 }
 
 if [ -n "$TARGET_CPU" ] && [ -n "$ANDROID_ABI" ]; then
@@ -147,6 +154,13 @@ EOF
         
         mkdir -p "$abi_dir"
         cp "$OUTPUT_DIR/libs/$android_abi/libv8.a" "$abi_dir/libv8.a"
+        
+        # Copy ICU libraries if they exist
+        for lib in "libicuuc.a" "libicui18n.a"; do
+            if [ -f "$OUTPUT_DIR/libs/$android_abi/$lib" ]; then
+                cp "$OUTPUT_DIR/libs/$android_abi/$lib" "$abi_dir/$lib"
+            fi
+        done
         
         cat > "$abi_dir/abi.json" <<EOF
 {

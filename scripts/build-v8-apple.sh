@@ -57,7 +57,7 @@ build_v8() {
         is_component_build=false \
         v8_monolithic=true \
         v8_use_external_startup_data=false \
-        v8_enable_i18n_support=false \
+        v8_enable_i18n_support=true \
         v8_enable_sandbox=false \
         treat_warnings_as_errors=false \
         symbol_level=0 \
@@ -101,6 +101,13 @@ build_v8() {
     # Copy output to artifacts
     mkdir -p "$OUTPUT_DIR/libs/$platform/$arch"
     cp "$build_dir/obj/libv8_monolith.a" "$OUTPUT_DIR/libs/$platform/$arch/v8_monolith.a"
+
+    # Copy ICU libraries if they exist separately
+    for lib in "libicuuc.a" "libicui18n.a"; do
+        if [ -f "$build_dir/obj/third_party/icu/$lib" ]; then
+            cp "$build_dir/obj/third_party/icu/$lib" "$OUTPUT_DIR/libs/$platform/$arch/$lib"
+        fi
+    done
 }
 
 if [ -n "$PLATFORM" ] && [ -n "$ARCH" ] && [ "$PLATFORM" != "bundle" ]; then
