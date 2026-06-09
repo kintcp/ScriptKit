@@ -174,22 +174,20 @@ if [ "$PLATFORM" = "bundle" ]; then
 
     # Create XCFramework
     rm -rf "$OUTPUT_DIR/X.Script.V8.xcframework"
-    xcodebuild -create-xcframework \
-        -library "$OUTPUT_DIR/libs-final/macos/v8_monolith.a" \
-        -headers "$OUTPUT_DIR/include" \
-        -library "$OUTPUT_DIR/libs-final/ios/v8_monolith.a" \
-        -headers "$OUTPUT_DIR/include" \
-        -library "$OUTPUT_DIR/libs-final/ios-simulator/v8_monolith.a" \
-        -headers "$OUTPUT_DIR/include" \
-        -library "$OUTPUT_DIR/libs-final/tvos/v8_monolith.a" \
-        -headers "$OUTPUT_DIR/include" \
-        -library "$OUTPUT_DIR/libs-final/tvos-simulator/v8_monolith.a" \
-        -headers "$OUTPUT_DIR/include" \
-        -library "$OUTPUT_DIR/libs-final/visionos/v8_monolith.a" \
-        -headers "$OUTPUT_DIR/include" \
-        -library "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a" \
-        -headers "$OUTPUT_DIR/include" \
-        -output "$OUTPUT_DIR/X.Script.V8.xcframework"
+    
+    local xcode_cmd="xcodebuild -create-xcframework"
+    
+    # Add each built library if it exists
+    for p in "macos" "ios" "ios-simulator" "tvos" "tvos-simulator" "visionos" "visionos-simulator"; do
+        if [ -f "$OUTPUT_DIR/libs-final/$p/v8_monolith.a" ]; then
+            xcode_cmd="$xcode_cmd -library $OUTPUT_DIR/libs-final/$p/v8_monolith.a -headers $OUTPUT_DIR/include"
+        fi
+    done
+    
+    xcode_cmd="$xcode_cmd -output $OUTPUT_DIR/X.Script.V8.xcframework"
+    
+    echo "Running: $xcode_cmd"
+    $xcode_cmd
 
     echo "XCFramework created at $OUTPUT_DIR/X.Script.V8.xcframework"
 
