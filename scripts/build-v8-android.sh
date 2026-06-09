@@ -59,6 +59,8 @@ build_v8() {
         v8_monolithic=true \
         v8_use_external_startup_data=false \
         v8_enable_i18n_support=true \
+        v8_enable_temporal_support=false \
+        enable_rust=false \
         v8_enable_sandbox=false \
         treat_warnings_as_errors=false \
         symbol_level=0 \
@@ -75,11 +77,8 @@ build_v8() {
     cp "$build_dir/obj/libv8_monolith.a" "$OUTPUT_DIR/libs/$android_abi/libv8.a"
     
     # Copy ICU libraries if they exist separately (sometimes they are not merged into monolith)
-    for lib in "libicuuc.a" "libicui18n.a"; do
-        if [ -f "$build_dir/obj/third_party/icu/$lib" ]; then
-            cp "$build_dir/obj/third_party/icu/$lib" "$OUTPUT_DIR/libs/$android_abi/$lib"
-        fi
-    done
+    # Search in multiple possible locations
+    find "$build_dir/obj/third_party/icu" -name "*.a" -exec cp {} "$OUTPUT_DIR/libs/$android_abi/" \; || echo "No extra ICU libs found in obj/third_party/icu"
 }
 
 if [ -n "$TARGET_CPU" ] && [ -n "$ANDROID_ABI" ]; then
@@ -153,14 +152,29 @@ EOF
         local abi_dir="$PREFAB_DIR/modules/v8/libs/android.$android_abi"
         
         mkdir -p "$abi_dir"
-        cp "$OUTPUT_DIR/libs/$android_abi/libv8.a" "$abi_dir/libv8.a"
         
-        # Copy ICU libraries if they exist
-        for lib in "libicuuc.a" "libicui18n.a"; do
-            if [ -f "$OUTPUT_DIR/libs/$android_abi/$lib" ]; then
-                cp "$OUTPUT_DIR/libs/$android_abi/$lib" "$abi_dir/$lib"
+        # Copy all static libraries found for this ABI
+        local libs=()
+        for lib_path in "$OUTPUT_DIR/libs/$android_abi/"*.a; do
+            if [ -f "$lib_path" ]; then
+                local lib_name=$(basename "$lib_path")
+                cp "$lib_path" "$abi_dir/$lib_name"
+                # Strip 'lib' prefix and '.a' suffix for export_libraries if needed
+                # But prefab usually wants the full name or just the base
+                libs+=("\"$lib_name\"")
             fi
         done
+        
+        # Update module.json for this specific module if not already done
+        # Note: In prefab, export_libraries is usually per module.
+        # Since we only have one module 'v8', we list all libs there.
+        # We'll overwrite the module.json each time, which is fine as they are consistent.
+        local libs_joined=$(IFS=,; echo "${libs[*]}")
+        cat > "$PREFAB_DIR/modules/v8/module.json" <<EOF
+{
+  "export_libraries": [$libs_joined]
+}
+EOF
         
         cat > "$abi_dir/abi.json" <<EOF
 {
