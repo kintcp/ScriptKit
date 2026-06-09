@@ -20,11 +20,13 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "X.Script.V8",
-            path: "X.Script.V8.xcframework"
+            url: "https://github.com/kintcp/X.Script.QuickJS/releases/download/spm-v1.0.4/X.Script.V8.xcframework.zip",
+            checksum: "0000000000000000000000000000000000000000000000000000000000000000"
         ),
         .binaryTarget(
             name: "X.Script.QuickJS",
-            path: "X.Script.QuickJS.xcframework"
+            url: "https://github.com/kintcp/X.Script.QuickJS/releases/download/quickjs-spm-v1.0.4/X.Script.QuickJS.xcframework.zip",
+            checksum: "0000000000000000000000000000000000000000000000000000000000000000"
         )
     ]
 )

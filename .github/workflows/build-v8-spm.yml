@@ -145,3 +145,35 @@ jobs:
             artifacts/v8-spm/X.Script.V8.xcframework.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Package.swift
+        if: startsWith(github.ref, 'refs/tags/spm-v')
+        run: |
+          CHECKSUM=$(swift package compute-checksum artifacts/v8-spm/X.Script.V8.xcframework.zip)
+          URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/X.Script.V8.xcframework.zip"
+          
+          python3 -c "
+          import re
+          with open('Package.swift', 'r') as f: content = f.read()
+          pattern = r'(\.binaryTarget\(\s*name:\s*\"X\.Script\.V8\",\s*)(?:path|url):.*?\)'
+          replacement = r'\1url: \"$URL\",\n            checksum: \"$CHECKSUM\")'
+          content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+          with open('Package.swift', 'w') as f: f.write(content)
+          "
+          
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          # Apply the change again on main branch
+          python3 -c "
+          import re
+          with open('Package.swift', 'r') as f: content = f.read()
+          pattern = r'(\.binaryTarget\(\s*name:\s*\"X\.Script\.V8\",\s*)(?:path|url):.*?\)'
+          replacement = r'\1url: \"$URL\",\n            checksum: \"$CHECKSUM\")'
+          content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+          with open('Package.swift', 'w') as f: f.write(content)
+          "
+          git add Package.swift
+          git commit -m "chore: update X.Script.V8 checksum for ${{ github.ref_name }}" || echo "No changes to commit"
+          git push origin main
