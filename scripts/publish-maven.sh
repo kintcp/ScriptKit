@@ -26,7 +26,7 @@ cat > "$VERSION_DIR/$ARTIFACT_ID-$VERSION.pom" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <modelVersion/4.0.0</modelVersion>
+  <modelVersion>4.0.0</modelVersion>
   <groupId>$GROUP_ID</groupId>
   <artifactId>$ARTIFACT_ID</artifactId>
   <version>$VERSION</version>
