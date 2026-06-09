@@ -44,6 +44,43 @@ if [ "$(uname)" = "Linux" ] && [ -f "build/install-build-deps.sh" ]; then
     sudo ./build/install-build-deps.sh --android --no-prompt || echo "Failed to install some deps, continuing anyway"
 fi
 
+patch_v8_android_build_config() {
+    local ndk_root="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+    if [ -z "$ndk_root" ]; then
+        return
+    fi
+
+    if [ ! -d "$ndk_root/toolchains/llvm/prebuilt" ]; then
+        echo "ANDROID_NDK_HOME/ANDROID_NDK_ROOT does not look like an Android NDK: $ndk_root" >&2
+        return 1
+    fi
+
+    echo "Using Android NDK: $ndk_root"
+    python3 - "$ndk_root" <<'PY'
+from pathlib import Path
+import sys
+
+ndk_root = sys.argv[1]
+path = Path("build/config/android/config.gni")
+text = path.read_text()
+old = '  android_ndk_root = "//third_party/android_toolchain/ndk"'
+new = f'  android_ndk_root = "{ndk_root}"'
+if old not in text and new not in text:
+    raise SystemExit("Unable to patch android_ndk_root in build/config/android/config.gni")
+path.write_text(text.replace(old, new, 1))
+PY
+}
+
+verify_no_missing_libcxx_hash_memory() {
+    local archive=$1
+    if nm -u "$archive" | grep -q "_ZNSt6__ndk113__hash_memory"; then
+        echo "libv8.a exposes unresolved std::__ndk1::__hash_memory; rebuild with a compatible Android NDK/libc++" >&2
+        return 1
+    fi
+}
+
+patch_v8_android_build_config
+
 # Build function
 build_v8() {
     local target_cpu=$1
@@ -75,6 +112,7 @@ build_v8() {
     # Copy output to artifacts
     mkdir -p "$OUTPUT_DIR/libs/$android_abi"
     cp "$build_dir/obj/libv8_monolith.a" "$OUTPUT_DIR/libs/$android_abi/libv8.a"
+    verify_no_missing_libcxx_hash_memory "$OUTPUT_DIR/libs/$android_abi/libv8.a"
     
     # Copy ICU libraries if they exist separately (sometimes they are not merged into monolith)
     # Search in multiple possible locations
@@ -153,28 +191,14 @@ EOF
         
         mkdir -p "$abi_dir"
         
-        # Copy all static libraries found for this ABI
-        local libs=()
+        # Copy all static libraries found for this ABI. The module library itself
+        # is linked by Prefab; export_libraries must only list extra libraries.
         for lib_path in "$OUTPUT_DIR/libs/$android_abi/"*.a; do
             if [ -f "$lib_path" ]; then
                 local lib_name=$(basename "$lib_path")
                 cp "$lib_path" "$abi_dir/$lib_name"
-                # Strip 'lib' prefix and '.a' suffix for export_libraries if needed
-                # But prefab usually wants the full name or just the base
-                libs+=("\"$lib_name\"")
             fi
         done
-        
-        # Update module.json for this specific module if not already done
-        # Note: In prefab, export_libraries is usually per module.
-        # Since we only have one module 'v8', we list all libs there.
-        # We'll overwrite the module.json each time, which is fine as they are consistent.
-        local libs_joined=$(IFS=,; echo "${libs[*]}")
-        cat > "$PREFAB_DIR/modules/v8/module.json" <<EOF
-{
-  "export_libraries": [$libs_joined]
-}
-EOF
         
         cat > "$abi_dir/abi.json" <<EOF
 {
