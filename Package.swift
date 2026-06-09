@@ -6,17 +6,25 @@ let package = Package(
     platforms: [
         .macOS(.v10_15),
         .iOS(.v13),
-        .tvOS(.v13)
+        .tvOS(.v13),
+        .visionOS(.v1)
     ],
     products: [
         .library(
             name: "XScriptV8",
             targets: ["XScriptV8"]),
+        .library(
+            name: "XScriptQuickJS",
+            targets: ["XScriptQuickJS"]),
     ],
     targets: [
         .binaryTarget(
             name: "XScriptV8",
             path: "XScriptV8.xcframework"
+        ),
+        .binaryTarget(
+            name: "XScriptQuickJS",
+            path: "XScriptQuickJS.xcframework"
         )
     ]
 )

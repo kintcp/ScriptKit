@@ -80,6 +80,18 @@ build_v8() {
         ios-simulator)
             gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" target_environment=\"simulator\" ios_deployment_target=\"13.0\""
             ;;
+        tvos)
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" ios_sdk_name=\"appletvos\" ios_deployment_target=\"13.0\""
+            ;;
+        tvos-simulator)
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" ios_sdk_name=\"appletvsimulator\" ios_deployment_target=\"13.0\""
+            ;;
+        visionos)
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" ios_sdk_name=\"xros\" ios_deployment_target=\"1.0\""
+            ;;
+        visionos-simulator)
+            gn_args="$gn_args target_os=\"ios\" target_cpu=\"$arch\" ios_sdk_name=\"xrsimulator\" ios_deployment_target=\"1.0\""
+            ;;
     esac
 
     echo "Building V8 for $platform $arch (JIT: $jit_enabled)..."
@@ -111,6 +123,10 @@ if [ "$PLATFORM" = "bundle" ]; then
     mkdir -p "$OUTPUT_DIR/libs-final/macos"
     mkdir -p "$OUTPUT_DIR/libs-final/ios"
     mkdir -p "$OUTPUT_DIR/libs-final/ios-simulator"
+    mkdir -p "$OUTPUT_DIR/libs-final/tvos"
+    mkdir -p "$OUTPUT_DIR/libs-final/tvos-simulator"
+    mkdir -p "$OUTPUT_DIR/libs-final/visionos"
+    mkdir -p "$OUTPUT_DIR/libs-final/visionos-simulator"
 
     # macOS Fat
     lipo -create \
@@ -127,6 +143,21 @@ if [ "$PLATFORM" = "bundle" ]; then
         "$OUTPUT_DIR/libs/ios-simulator/arm64/v8_monolith.a" \
         -output "$OUTPUT_DIR/libs-final/ios-simulator/v8_monolith.a"
 
+    # tvOS (arm64 only)
+    cp "$OUTPUT_DIR/libs/tvos/arm64/v8_monolith.a" "$OUTPUT_DIR/libs-final/tvos/v8_monolith.a"
+
+    # tvOS Simulator Fat
+    lipo -create \
+        "$OUTPUT_DIR/libs/tvos-simulator/x64/v8_monolith.a" \
+        "$OUTPUT_DIR/libs/tvos-simulator/arm64/v8_monolith.a" \
+        -output "$OUTPUT_DIR/libs-final/tvos-simulator/v8_monolith.a"
+
+    # visionOS (arm64 only)
+    cp "$OUTPUT_DIR/libs/visionos/arm64/v8_monolith.a" "$OUTPUT_DIR/libs-final/visionos/v8_monolith.a"
+
+    # visionOS Simulator (arm64 only)
+    cp "$OUTPUT_DIR/libs/visionos-simulator/arm64/v8_monolith.a" "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a"
+
     # Headers should already be in $OUTPUT_DIR/include
     if [ ! -d "$OUTPUT_DIR/include" ]; then
          echo "Exporting headers..."
@@ -142,6 +173,14 @@ if [ "$PLATFORM" = "bundle" ]; then
         -library "$OUTPUT_DIR/libs-final/ios/v8_monolith.a" \
         -headers "$OUTPUT_DIR/include" \
         -library "$OUTPUT_DIR/libs-final/ios-simulator/v8_monolith.a" \
+        -headers "$OUTPUT_DIR/include" \
+        -library "$OUTPUT_DIR/libs-final/tvos/v8_monolith.a" \
+        -headers "$OUTPUT_DIR/include" \
+        -library "$OUTPUT_DIR/libs-final/tvos-simulator/v8_monolith.a" \
+        -headers "$OUTPUT_DIR/include" \
+        -library "$OUTPUT_DIR/libs-final/visionos/v8_monolith.a" \
+        -headers "$OUTPUT_DIR/include" \
+        -library "$OUTPUT_DIR/libs-final/visionos-simulator/v8_monolith.a" \
         -headers "$OUTPUT_DIR/include" \
         -output "$OUTPUT_DIR/XScriptV8.xcframework"
 

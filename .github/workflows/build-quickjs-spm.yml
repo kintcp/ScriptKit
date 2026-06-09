@@ -1,0 +1,128 @@
+name: Build XScriptQuickJS SPM
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "QuickJS version (master or tag)"
+        required: true
+        default: "master"
+
+  push:
+    tags:
+      - "quickjs-spm-v*"
+
+jobs:
+  build-quickjs-libs:
+    name: Build QuickJS for ${{ matrix.platform }} ${{ matrix.arch }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            arch: x86_64
+          - platform: macos
+            arch: arm64
+          - platform: ios
+            arch: arm64
+          - platform: ios-simulator
+            arch: x86_64
+          - platform: ios-simulator
+            arch: arm64
+          - platform: tvos
+            arch: arm64
+          - platform: tvos-simulator
+            arch: x86_64
+          - platform: tvos-simulator
+            arch: arm64
+          - platform: visionos
+            arch: arm64
+          - platform: visionos-simulator
+            arch: arm64
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Build Library
+        run: |
+          chmod +x scripts/build-quickjs-apple.sh
+          ./scripts/build-quickjs-apple.sh ${{ github.event.inputs.version || 'master' }} ${{ matrix.platform }} ${{ matrix.arch }}
+
+      - name: Upload Library Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickjs-lib-${{ matrix.platform }}-${{ matrix.arch }}
+          path: artifacts/quickjs-spm/libs/${{ matrix.platform }}/${{ matrix.arch }}/libquickjs.a
+
+      - name: Upload Headers Artifact
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickjs-headers-apple
+          path: artifacts/quickjs-spm/include/
+
+  bundle-xcframework:
+    name: Bundle QuickJS Apple XCFramework
+    needs: build-quickjs-libs
+    runs-on: macos-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Download all libraries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/quickjs-spm/libs-raw/
+          pattern: quickjs-lib-*
+
+      - name: Download headers
+        uses: actions/download-artifact@v4
+        with:
+          name: quickjs-headers-apple
+          path: artifacts/quickjs-spm/include/
+
+      - name: Bundle XCFramework
+        run: |
+          mkdir -p artifacts/quickjs-spm/libs/macos/x86_64
+          mkdir -p artifacts/quickjs-spm/libs/macos/arm64
+          mkdir -p artifacts/quickjs-spm/libs/ios/arm64
+          mkdir -p artifacts/quickjs-spm/libs/ios-simulator/x86_64
+          mkdir -p artifacts/quickjs-spm/libs/ios-simulator/arm64
+          mkdir -p artifacts/quickjs-spm/libs/tvos/arm64
+          mkdir -p artifacts/quickjs-spm/libs/tvos-simulator/x86_64
+          mkdir -p artifacts/quickjs-spm/libs/tvos-simulator/arm64
+          mkdir -p artifacts/quickjs-spm/libs/visionos/arm64
+          mkdir -p artifacts/quickjs-spm/libs/visionos-simulator/arm64
+          
+          cp artifacts/quickjs-spm/libs-raw/quickjs-lib-macos-x86_64/libquickjs.a artifacts/quickjs-spm/libs/macos/x86_64/
+          cp artifacts/quickjs-spm/libs-raw/quickjs-lib-macos-arm64/libquickjs.a artifacts/quickjs-spm/libs/macos/arm64/
+          cp artifacts/quickjs-spm/libs-raw/quickjs-lib-ios-arm64/libquickjs.a artifacts/quickjs-spm/libs/ios/arm64/
+          cp artifacts/quickjs-spm/libs-raw/quickjs-lib-ios-simulator-x86_64/libquickjs.a artifacts/quickjs-spm/libs/ios-simulator/x86_64/
+          cp artifacts/quickjs-spm/libs-raw/quickjs-lib-ios-simulator-arm64/libquickjs.a artifacts/quickjs-spm/libs/ios-simulator/arm64/
+          cp artifacts/quickjs-spm/libs-raw/quickjs-lib-tvos-arm64/libquickjs.a artifacts/quickjs-spm/libs/tvos/arm64/
+          cp artifacts/quickjs-spm/libs-raw/quickjs-lib-tvos-simulator-x86_64/libquickjs.a artifacts/quickjs-spm/libs/tvos-simulator/x86_64/
+          cp artifacts/quickjs-spm/libs-raw/quickjs-lib-tvos-simulator-arm64/libquickjs.a artifacts/quickjs-spm/libs/tvos-simulator/arm64/
+          cp artifacts/quickjs-spm/libs-raw/quickjs-lib-visionos-arm64/libquickjs.a artifacts/quickjs-spm/libs/visionos/arm64/
+          cp artifacts/quickjs-spm/libs-raw/quickjs-lib-visionos-simulator-arm64/libquickjs.a artifacts/quickjs-spm/libs/visionos-simulator/arm64/
+
+          chmod +x scripts/build-quickjs-apple.sh
+          # We need a dummy QuickJS dir for the bundle command to work if it relies on it, 
+          # but our script handles it. We just need to trigger the 'bundle' mode.
+          ./scripts/build-quickjs-apple.sh ${{ github.event.inputs.version || 'master' }} bundle
+
+      - name: Upload XCFramework
+        uses: actions/upload-artifact@v4
+        with:
+          name: XScriptQuickJS-XCFramework
+          path: artifacts/quickjs-spm/XScriptQuickJS.xcframework
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/quickjs-spm-v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/quickjs-spm/XScriptQuickJS.xcframework.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

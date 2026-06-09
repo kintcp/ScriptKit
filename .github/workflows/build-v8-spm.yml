@@ -35,6 +35,21 @@ jobs:
           - platform: ios-simulator
             arch: arm64
             jit: false
+          - platform: tvos
+            arch: arm64
+            jit: false
+          - platform: tvos-simulator
+            arch: x64
+            jit: false
+          - platform: tvos-simulator
+            arch: arm64
+            jit: false
+          - platform: visionos
+            arch: arm64
+            jit: false
+          - platform: visionos-simulator
+            arch: arm64
+            jit: false
 
     steps:
       - name: Checkout project
@@ -96,12 +111,22 @@ jobs:
           mkdir -p artifacts/v8-spm/libs/ios/arm64
           mkdir -p artifacts/v8-spm/libs/ios-simulator/x64
           mkdir -p artifacts/v8-spm/libs/ios-simulator/arm64
+          mkdir -p artifacts/v8-spm/libs/tvos/arm64
+          mkdir -p artifacts/v8-spm/libs/tvos-simulator/x64
+          mkdir -p artifacts/v8-spm/libs/tvos-simulator/arm64
+          mkdir -p artifacts/v8-spm/libs/visionos/arm64
+          mkdir -p artifacts/v8-spm/libs/visionos-simulator/arm64
           
           cp artifacts/v8-spm/libs-raw/v8-lib-macos-x64/v8_monolith.a artifacts/v8-spm/libs/macos/x64/
           cp artifacts/v8-spm/libs-raw/v8-lib-macos-arm64/v8_monolith.a artifacts/v8-spm/libs/macos/arm64/
           cp artifacts/v8-spm/libs-raw/v8-lib-ios-arm64/v8_monolith.a artifacts/v8-spm/libs/ios/arm64/
           cp artifacts/v8-spm/libs-raw/v8-lib-ios-simulator-x64/v8_monolith.a artifacts/v8-spm/libs/ios-simulator/x64/
           cp artifacts/v8-spm/libs-raw/v8-lib-ios-simulator-arm64/v8_monolith.a artifacts/v8-spm/libs/ios-simulator/arm64/
+          cp artifacts/v8-spm/libs-raw/v8-lib-tvos-arm64/v8_monolith.a artifacts/v8-spm/libs/tvos/arm64/
+          cp artifacts/v8-spm/libs-raw/v8-lib-tvos-simulator-x64/v8_monolith.a artifacts/v8-spm/libs/tvos-simulator/x64/
+          cp artifacts/v8-spm/libs-raw/v8-lib-tvos-simulator-arm64/v8_monolith.a artifacts/v8-spm/libs/tvos-simulator/arm64/
+          cp artifacts/v8-spm/libs-raw/v8-lib-visionos-arm64/v8_monolith.a artifacts/v8-spm/libs/visionos/arm64/
+          cp artifacts/v8-spm/libs-raw/v8-lib-visionos-simulator-arm64/v8_monolith.a artifacts/v8-spm/libs/visionos-simulator/arm64/
 
           chmod +x scripts/build-v8-apple.sh
           ./scripts/build-v8-apple.sh ${{ github.event.inputs.version || '15.1.44' }} bundle
