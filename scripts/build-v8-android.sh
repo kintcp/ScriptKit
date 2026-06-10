@@ -171,10 +171,12 @@ EOF
     mkdir -p "$PREFAB_DIR/modules/v8/include"
     
     # In bundle mode, headers should be in $OUTPUT_DIR/include
-    if [ -d "$OUTPUT_DIR/include" ]; then
-        cp -R "$OUTPUT_DIR/include/"* "$PREFAB_DIR/modules/v8/include/"
+    if [ -d "$OUTPUT_DIR/include" ] && [ "$(ls -A "$OUTPUT_DIR/include")" ]; then
+        echo "Copying headers from $OUTPUT_DIR/include..."
+        cp -R "$OUTPUT_DIR/include"/. "$PREFAB_DIR/modules/v8/include/"
     elif [ -d "include" ]; then
-         cp -R include/* "$PREFAB_DIR/modules/v8/include/"
+        echo "Copying headers from local include directory..."
+        cp -R include/. "$PREFAB_DIR/modules/v8/include/"
     fi
 
     cat > "$PREFAB_DIR/prefab.json" <<EOF

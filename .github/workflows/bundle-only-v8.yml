@@ -55,10 +55,14 @@ jobs:
           find artifacts/v8-android-raw -name "v8-gn.h" | grep "x86_64" | xargs -I {} cp {} artifacts/v8-android/abi_includes/x86_64/ || true
 
           mkdir -p artifacts/v8-android/include
-          # Find where headers are
-          HEADER_DIR=$(find artifacts/v8-android-raw -name "v8.h" -exec dirname {} \; | head -n 1)
-          if [ -n "$HEADER_DIR" ]; then
-            cp -r "$HEADER_DIR"/* artifacts/v8-android/include/
+          # Find where headers are (looking for v8.h which is always at the root of include)
+          V8_H_PATH=$(find artifacts/v8-android-raw -name "v8.h" | head -n 1)
+          if [ -n "$V8_H_PATH" ]; then
+            HEADER_DIR=$(dirname "$V8_H_PATH")
+            echo "Found headers at $HEADER_DIR"
+            cp -R "$HEADER_DIR"/. artifacts/v8-android/include/
+          else
+            echo "Warning: v8.h not found in artifacts!"
           fi
 
           chmod +x scripts/build-v8-android.sh
