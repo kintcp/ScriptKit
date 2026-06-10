@@ -99,6 +99,7 @@ build_v8() {
         v8_enable_temporal_support=false \
         enable_rust=false \
         v8_enable_sandbox=false \
+        v8_generate_external_defines_header=true \
         treat_warnings_as_errors=false \
         symbol_level=0 \
         use_custom_libcxx=false \
@@ -113,6 +114,12 @@ build_v8() {
     mkdir -p "$OUTPUT_DIR/libs/$android_abi"
     cp "$build_dir/obj/libv8_monolith.a" "$OUTPUT_DIR/libs/$android_abi/libv8.a"
     verify_no_missing_libcxx_hash_memory "$OUTPUT_DIR/libs/$android_abi/libv8.a"
+
+    # Copy v8-gn.h
+    mkdir -p "$OUTPUT_DIR/abi_includes/$android_abi"
+    if [ -f "$build_dir/gen/include/v8-gn.h" ]; then
+        cp "$build_dir/gen/include/v8-gn.h" "$OUTPUT_DIR/abi_includes/$android_abi/v8-gn.h"
+    fi
     
     # Copy ICU libraries if they exist separately (sometimes they are not merged into monolith)
     # Search in multiple possible locations
@@ -181,7 +188,10 @@ EOF
 
     cat > "$PREFAB_DIR/modules/v8/module.json" <<EOF
 {
-  "export_libraries": []
+  "export_libraries": [],
+  "android": {
+    "export_cflags": ["-DV8_GN_HEADER"]
+  }
 }
 EOF
 
@@ -189,8 +199,13 @@ EOF
         local android_abi=$1
         local abi_dir="$PREFAB_DIR/modules/v8/libs/android.$android_abi"
         
-        mkdir -p "$abi_dir"
+        mkdir -p "$abi_dir/include"
         
+        # Copy ABI-specific v8-gn.h
+        if [ -f "$OUTPUT_DIR/abi_includes/$android_abi/v8-gn.h" ]; then
+            cp "$OUTPUT_DIR/abi_includes/$android_abi/v8-gn.h" "$abi_dir/include/v8-gn.h"
+        fi
+
         # Copy all static libraries found for this ABI. The module library itself
         # is linked by Prefab; export_libraries must only list extra libraries.
         for lib_path in "$OUTPUT_DIR/libs/$android_abi/"*.a; do

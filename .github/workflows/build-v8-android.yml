@@ -78,6 +78,12 @@ jobs:
           name: v8-lib-${{ matrix.android_abi }}
           path: artifacts/v8-android/libs/${{ matrix.android_abi }}/libv8.a
 
+      - name: Upload ABI Includes Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-abi-include-${{ matrix.android_abi }}
+          path: artifacts/v8-android/abi_includes/${{ matrix.android_abi }}/v8-gn.h
+
       - name: Upload Headers Artifact
         if: matrix.target_cpu == 'arm64'
         uses: actions/upload-artifact@v4
@@ -99,6 +105,12 @@ jobs:
           path: artifacts/v8-android/libs-raw/
           pattern: v8-lib-*
 
+      - name: Download all ABI includes
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/v8-android/abi-includes-raw/
+          pattern: v8-abi-include-*
+
       - name: Download headers
         uses: actions/download-artifact@v4
         with:
@@ -116,6 +128,16 @@ jobs:
           cp artifacts/v8-android/libs-raw/v8-lib-arm64-v8a/libv8.a artifacts/v8-android/libs/arm64-v8a/
           cp artifacts/v8-android/libs-raw/v8-lib-x86/libv8.a artifacts/v8-android/libs/x86/
           cp artifacts/v8-android/libs-raw/v8-lib-x86_64/libv8.a artifacts/v8-android/libs/x86_64/
+
+          mkdir -p artifacts/v8-android/abi_includes/armeabi-v7a
+          mkdir -p artifacts/v8-android/abi_includes/arm64-v8a
+          mkdir -p artifacts/v8-android/abi_includes/x86
+          mkdir -p artifacts/v8-android/abi_includes/x86_64
+
+          cp artifacts/v8-android/abi-includes-raw/v8-abi-include-armeabi-v7a/v8-gn.h artifacts/v8-android/abi_includes/armeabi-v7a/
+          cp artifacts/v8-android/abi-includes-raw/v8-abi-include-arm64-v8a/v8-gn.h artifacts/v8-android/abi_includes/arm64-v8a/
+          cp artifacts/v8-android/abi-includes-raw/v8-abi-include-x86/v8-gn.h artifacts/v8-android/abi_includes/x86/
+          cp artifacts/v8-android/abi-includes-raw/v8-abi-include-x86_64/v8-gn.h artifacts/v8-android/abi_includes/x86_64/
 
           chmod +x scripts/build-v8-android.sh
           ./scripts/build-v8-android.sh ${{ github.event.inputs.version || '15.1.44' }} bundle

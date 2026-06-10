@@ -104,6 +104,7 @@ build_v8() {
         v8_enable_temporal_support=false \
         enable_rust=false \
         v8_enable_sandbox=false \
+        v8_generate_external_defines_header=true \
         treat_warnings_as_errors=false \
         symbol_level=0 \
         use_custom_libcxx=false \
@@ -139,6 +140,12 @@ build_v8() {
     mkdir -p "$OUTPUT_DIR/libs/$platform/$arch"
     cp "$build_dir/obj/libv8_monolith.a" "$OUTPUT_DIR/libs/$platform/$arch/v8_monolith.a"
     verify_archive_platform "$platform" "$OUTPUT_DIR/libs/$platform/$arch/v8_monolith.a"
+
+    # Copy v8-gn.h
+    if [ -f "$build_dir/gen/include/v8-gn.h" ]; then
+        mkdir -p "$OUTPUT_DIR/include"
+        cp "$build_dir/gen/include/v8-gn.h" "$OUTPUT_DIR/include/v8-gn.h"
+    fi
 
     # Copy ICU libraries if they exist separately
     for lib in "libicuuc.a" "libicui18n.a"; do
