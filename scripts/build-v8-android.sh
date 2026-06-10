@@ -181,8 +181,7 @@ EOF
 
     cat > "$PREFAB_DIR/modules/v8/module.json" <<EOF
 {
-  "export_libraries": [],
-  "static": true
+  "export_libraries": []
 }
 EOF
 
