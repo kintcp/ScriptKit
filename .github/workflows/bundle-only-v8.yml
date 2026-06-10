@@ -1,0 +1,125 @@
+name: Bundle V8 Only (No Rebuild)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "The Run ID of the build that generated the artifacts"
+        required: true
+      platform:
+        description: "Platform to bundle (android or spm)"
+        required: true
+        type: choice
+        options:
+          - android
+          - spm
+      version:
+        description: "Version string (e.g. 1.0.9)"
+        required: true
+        default: "1.0.9"
+
+jobs:
+  bundle-android:
+    if: github.event.inputs.platform == 'android'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts/v8-android-raw/
+      
+      - name: Prepare and Bundle AAR
+        run: |
+          mkdir -p artifacts/v8-android/libs/armeabi-v7a
+          mkdir -p artifacts/v8-android/libs/arm64-v8a
+          mkdir -p artifacts/v8-android/libs/x86
+          mkdir -p artifacts/v8-android/libs/x86_64
+          
+          find artifacts/v8-android-raw -name "libv8.a" | grep "armeabi-v7a" | xargs -I {} cp {} artifacts/v8-android/libs/armeabi-v7a/ || true
+          find artifacts/v8-android-raw -name "libv8.a" | grep "arm64-v8a" | xargs -I {} cp {} artifacts/v8-android/libs/arm64-v8a/ || true
+          find artifacts/v8-android-raw -name "libv8.a" | grep "x86" | grep -v "x86_64" | xargs -I {} cp {} artifacts/v8-android/libs/x86/ || true
+          find artifacts/v8-android-raw -name "libv8.a" | grep "x86_64" | xargs -I {} cp {} artifacts/v8-android/libs/x86_64/ || true
+
+          mkdir -p artifacts/v8-android/abi_includes/armeabi-v7a
+          mkdir -p artifacts/v8-android/abi_includes/arm64-v8a
+          mkdir -p artifacts/v8-android/abi_includes/x86
+          mkdir -p artifacts/v8-android/abi_includes/x86_64
+
+          find artifacts/v8-android-raw -name "v8-gn.h" | grep "armeabi-v7a" | xargs -I {} cp {} artifacts/v8-android/abi_includes/armeabi-v7a/ || true
+          find artifacts/v8-android-raw -name "v8-gn.h" | grep "arm64-v8a" | xargs -I {} cp {} artifacts/v8-android/abi_includes/arm64-v8a/ || true
+          find artifacts/v8-android-raw -name "v8-gn.h" | grep "x86" | grep -v "x86_64" | xargs -I {} cp {} artifacts/v8-android/abi_includes/x86/ || true
+          find artifacts/v8-android-raw -name "v8-gn.h" | grep "x86_64" | xargs -I {} cp {} artifacts/v8-android/abi_includes/x86_64/ || true
+
+          mkdir -p artifacts/v8-android/include
+          # Find where headers are
+          HEADER_DIR=$(find artifacts/v8-android-raw -name "v8.h" -exec dirname {} \; | head -n 1)
+          if [ -n "$HEADER_DIR" ]; then
+            cp -r "$HEADER_DIR"/* artifacts/v8-android/include/
+          fi
+
+          chmod +x scripts/build-v8-android.sh
+          ./scripts/build-v8-android.sh 15.1.44 bundle
+
+      - name: Publish to Maven Repo (Local)
+        run: |
+          chmod +x scripts/publish-maven.sh
+          ./scripts/publish-maven.sh X.Script.V8 "${{ github.event.inputs.version }}" artifacts/v8-android/X.Script.V8.aar
+
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: maven-repo
+          clean: false
+
+  bundle-spm:
+    if: github.event.inputs.platform == 'spm'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts/v8-spm-raw/
+
+      - name: Prepare and Bundle XCFramework
+        run: |
+          mkdir -p artifacts/v8-spm/libs/macos/x64
+          mkdir -p artifacts/v8-spm/libs/macos/arm64
+          mkdir -p artifacts/v8-spm/libs/ios/arm64
+          mkdir -p artifacts/v8-spm/libs/ios-simulator/x64
+          mkdir -p artifacts/v8-spm/libs/ios-simulator/arm64
+
+          find artifacts/v8-spm-raw -name "v8_monolith.a" | grep "macos/x64" | xargs -I {} cp {} artifacts/v8-spm/libs/macos/x64/ || true
+          find artifacts/v8-spm-raw -name "v8_monolith.a" | grep "macos/arm64" | xargs -I {} cp {} artifacts/v8-spm/libs/macos/arm64/ || true
+          find artifacts/v8-spm-raw -name "v8_monolith.a" | grep "ios/arm64" | xargs -I {} cp {} artifacts/v8-spm/libs/ios/arm64/ || true
+          find artifacts/v8-spm-raw -name "v8_monolith.a" | grep "ios-simulator/x64" | xargs -I {} cp {} artifacts/v8-spm/libs/ios-simulator/x64/ || true
+          find artifacts/v8-spm-raw -name "v8_monolith.a" | grep "ios-simulator/arm64" | xargs -I {} cp {} artifacts/v8-spm/libs/ios-simulator/arm64/ || true
+
+          mkdir -p artifacts/v8-spm/include
+          HEADER_DIR=$(find artifacts/v8-spm-raw -name "v8.h" -exec dirname {} \; | head -n 1)
+          if [ -n "$HEADER_DIR" ]; then
+            cp -r "$HEADER_DIR"/* artifacts/v8-spm/include/
+          fi
+
+          chmod +x scripts/build-v8-apple.sh
+          ./scripts/build-v8-apple.sh 15.1.44 bundle
+
+      - name: Update Package.swift Checksum
+        run: |
+          # Note: This logic for checksum update requires a pre-existing release URL or manual handling.
+          # For now, we just upload the zip artifact.
+          echo "XCFramework bundle complete"
+
+      - name: Upload XCFramework Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: X.Script.V8-XCFramework-Manual
+          path: artifacts/v8-spm/X.Script.V8.xcframework.zip
