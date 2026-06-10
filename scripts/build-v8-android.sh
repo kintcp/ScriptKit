@@ -166,18 +166,37 @@ Created-By: 1.0 (Android)
 EOF
     (cd "$AAR_DIR" && zip -q -r classes.jar META-INF && rm -rf META-INF)
 
-    # Prefab configuration
+    # Prepare headers
     PREFAB_DIR="$AAR_DIR/prefab"
-    mkdir -p "$PREFAB_DIR/modules/v8/include"
+    INCLUDE_DIR="$PREFAB_DIR/modules/v8/include"
+    mkdir -p "$INCLUDE_DIR"
     
-    # In bundle mode, headers should be in $OUTPUT_DIR/include
     if [ -d "$OUTPUT_DIR/include" ] && [ "$(ls -A "$OUTPUT_DIR/include")" ]; then
-        echo "Copying headers from $OUTPUT_DIR/include..."
-        cp -R "$OUTPUT_DIR/include"/. "$PREFAB_DIR/modules/v8/include/"
+        cp -R "$OUTPUT_DIR/include"/. "$INCLUDE_DIR/"
     elif [ -d "include" ]; then
-        echo "Copying headers from local include directory..."
-        cp -R include/. "$PREFAB_DIR/modules/v8/include/"
+        cp -R include/. "$INCLUDE_DIR/"
     fi
+
+    # Create the dispatcher v8-gn.h
+    cat > "$INCLUDE_DIR/v8-gn.h" <<EOF
+#ifndef V8_GN_DISPATCHER_H
+#define V8_GN_DISPATCHER_H
+
+#if defined(__arm64__) || defined(__aarch64__)
+  #include "v8-configs/arm64-v8a/v8-gn.h"
+#elif defined(__arm__)
+  #include "v8-configs/armeabi-v7a/v8-gn.h"
+#elif defined(__i386__)
+  #include "v8-configs/x86/v8-gn.h"
+#elif defined(__x86_64__)
+  #include "v8-configs/x86_64/v8-gn.h"
+#endif
+
+#endif
+EOF
+
+    # Patch v8config.h
+    find "$INCLUDE_DIR" -name "v8config.h" -exec sed -i 's/#ifdef V8_GN_HEADER/#if 1 \/\/ V8_GN_HEADER patched/g' {} +
 
     cat > "$PREFAB_DIR/prefab.json" <<EOF
 {
@@ -190,28 +209,24 @@ EOF
 
     cat > "$PREFAB_DIR/modules/v8/module.json" <<EOF
 {
-  "export_libraries": []
+  "export_libraries": [],
+  "static": true
 }
 EOF
-
-    # Patch v8config.h in the AAR to unconditionally include v8-gn.h
-    # This avoids the need for users to define V8_GN_HEADER manually.
-    find "$PREFAB_DIR/modules/v8/include" -name "v8config.h" -exec sed -i 's/#ifdef V8_GN_HEADER/#if 1 \/\/ V8_GN_HEADER patched/g' {} +
-
 
     pack_prefab_abi() {
         local android_abi=$1
         local abi_dir="$PREFAB_DIR/modules/v8/libs/android.$android_abi"
         
-        mkdir -p "$abi_dir/include"
+        mkdir -p "$abi_dir"
         
-        # Copy ABI-specific v8-gn.h
+        # Copy ABI-specific v8-gn.h to a subfolder in common include
         if [ -f "$OUTPUT_DIR/abi_includes/$android_abi/v8-gn.h" ]; then
-            cp "$OUTPUT_DIR/abi_includes/$android_abi/v8-gn.h" "$abi_dir/include/v8-gn.h"
+            mkdir -p "$INCLUDE_DIR/v8-configs/$android_abi"
+            cp "$OUTPUT_DIR/abi_includes/$android_abi/v8-gn.h" "$INCLUDE_DIR/v8-configs/$android_abi/v8-gn.h"
         fi
 
-        # Copy all static libraries found for this ABI. The module library itself
-        # is linked by Prefab; export_libraries must only list extra libraries.
+        # Copy all static libraries found for this ABI.
         for lib_path in "$OUTPUT_DIR/libs/$android_abi/"*.a; do
             if [ -f "$lib_path" ]; then
                 local lib_name=$(basename "$lib_path")
