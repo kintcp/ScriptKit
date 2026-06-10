@@ -188,12 +188,14 @@ EOF
 
     cat > "$PREFAB_DIR/modules/v8/module.json" <<EOF
 {
-  "export_libraries": [],
-  "android": {
-    "export_cflags": ["-DV8_GN_HEADER"]
-  }
+  "export_libraries": []
 }
 EOF
+
+    # Patch v8config.h in the AAR to unconditionally include v8-gn.h
+    # This avoids the need for users to define V8_GN_HEADER manually.
+    find "$PREFAB_DIR/modules/v8/include" -name "v8config.h" -exec sed -i 's/#ifdef V8_GN_HEADER/#if 1 \/\/ V8_GN_HEADER patched/g' {} +
+
 
     pack_prefab_abi() {
         local android_abi=$1
