@@ -13,7 +13,7 @@ on:
       - "aar-v*"
 
 env:
-  ANDROID_NDK_VERSION: "27.2.12479018"
+  ANDROID_NDK_VERSION: "29.0.14206865"
 
 jobs:
   build-v8-libs:
@@ -55,7 +55,7 @@ jobs:
       - name: Setup Android SDK Tools
         uses: android-actions/setup-android@v3
 
-      - name: Install Android NDK 27
+      - name: Install Android NDK 29
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ANDROID_NDK_VERSION"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"

@@ -16,7 +16,7 @@ dependencies {
 }
 ```
 
-The V8 AAR is built with Android NDK 27. Consumers should use NDK 27 or newer.
+The V8 AAR is built with Android NDK 29. Consumers should set `ndkVersion "29.0.14206865"` or newer.
 
 ## Swift Package Manager (SPM)
 
