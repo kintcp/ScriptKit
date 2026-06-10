@@ -166,38 +166,10 @@ Created-By: 1.0 (Android)
 EOF
     (cd "$AAR_DIR" && zip -q -r classes.jar META-INF && rm -rf META-INF)
 
-    # Prepare headers
+    # Prepare Prefab metadata
     PREFAB_DIR="$AAR_DIR/prefab"
-    INCLUDE_DIR="$PREFAB_DIR/modules/v8/include"
-    mkdir -p "$INCLUDE_DIR"
+    mkdir -p "$PREFAB_DIR/modules/v8"
     
-    if [ -d "$OUTPUT_DIR/include" ] && [ "$(ls -A "$OUTPUT_DIR/include")" ]; then
-        cp -R "$OUTPUT_DIR/include"/. "$INCLUDE_DIR/"
-    elif [ -d "include" ]; then
-        cp -R include/. "$INCLUDE_DIR/"
-    fi
-
-    # Create the dispatcher v8-gn.h
-    cat > "$INCLUDE_DIR/v8-gn.h" <<EOF
-#ifndef V8_GN_DISPATCHER_H
-#define V8_GN_DISPATCHER_H
-
-#if defined(__arm64__) || defined(__aarch64__)
-  #include "v8-configs/arm64-v8a/v8-gn.h"
-#elif defined(__arm__)
-  #include "v8-configs/armeabi-v7a/v8-gn.h"
-#elif defined(__i386__)
-  #include "v8-configs/x86/v8-gn.h"
-#elif defined(__x86_64__)
-  #include "v8-configs/x86_64/v8-gn.h"
-#endif
-
-#endif
-EOF
-
-    # Patch v8config.h
-    find "$INCLUDE_DIR" -name "v8config.h" -exec sed -i 's/#ifdef V8_GN_HEADER/#if 1 \/\/ V8_GN_HEADER patched/g' {} +
-
     cat > "$PREFAB_DIR/prefab.json" <<EOF
 {
   "schema_version": 2,
@@ -218,15 +190,25 @@ EOF
         local android_abi=$1
         local abi_dir="$PREFAB_DIR/modules/v8/libs/android.$android_abi"
         
-        mkdir -p "$abi_dir"
+        # Create a full, redundant include directory for each ABI
+        mkdir -p "$abi_dir/include"
         
-        # Copy ABI-specific v8-gn.h to a subfolder in common include
-        if [ -f "$OUTPUT_DIR/abi_includes/$android_abi/v8-gn.h" ]; then
-            mkdir -p "$INCLUDE_DIR/v8-configs/$android_abi"
-            cp "$OUTPUT_DIR/abi_includes/$android_abi/v8-gn.h" "$INCLUDE_DIR/v8-configs/$android_abi/v8-gn.h"
+        # 1. Copy common headers
+        if [ -d "$OUTPUT_DIR/include" ] && [ "$(ls -A "$OUTPUT_DIR/include")" ]; then
+            cp -R "$OUTPUT_DIR/include"/. "$abi_dir/include/"
+        elif [ -d "include" ]; then
+            cp -R include/. "$abi_dir/include/"
         fi
 
-        # Copy all static libraries found for this ABI.
+        # 2. Copy ABI-specific v8-gn.h
+        if [ -f "$OUTPUT_DIR/abi_includes/$android_abi/v8-gn.h" ]; then
+            cp "$OUTPUT_DIR/abi_includes/$android_abi/v8-gn.h" "$abi_dir/include/v8-gn.h"
+        fi
+
+        # 3. Patch v8config.h in this specific ABI directory
+        find "$abi_dir/include" -name "v8config.h" -exec sed -i 's/#ifdef V8_GN_HEADER/#if 1 \/\/ V8_GN_HEADER patched/g' {} +
+
+        # 4. Copy libraries
         for lib_path in "$OUTPUT_DIR/libs/$android_abi/"*.a; do
             if [ -f "$lib_path" ]; then
                 local lib_name=$(basename "$lib_path")
