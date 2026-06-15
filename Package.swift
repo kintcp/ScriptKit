@@ -18,9 +18,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "X.Script.V8",
-            url: "https://github.com/kintcp/X.Script/releases/download/spm-v1.0.4/X.Script.V8.xcframework.zip",
-            checksum: "0000000000000000000000000000000000000000000000000000000000000000"
-        ),
+            url: "https://github.com/kintcp/X.Script/releases/download/spm-v1.0.9/X.Script.V8.xcframework.zip",
+            checksum: "6713ae26e3cc81445c71400b214af6a315bb967774c11a5c541c59ef8ed7d404"),
         .binaryTarget(
             name: "X.Script.QuickJS",
             url: "https://github.com/kintcp/X.Script/releases/download/quickjs-spm-v1.0.5/X.Script.QuickJS.xcframework.zip",
