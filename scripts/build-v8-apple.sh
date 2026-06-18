@@ -101,6 +101,7 @@ build_v8() {
         v8_monolithic=true \
         v8_use_external_startup_data=false \
         v8_enable_i18n_support=true \
+        icu_use_data_file=false \
         v8_enable_temporal_support=false \
         enable_rust=false \
         v8_enable_sandbox=false \
@@ -147,12 +148,6 @@ build_v8() {
         cp "$build_dir/gen/include/v8-gn.h" "$OUTPUT_DIR/include/v8-gn.h"
     fi
 
-    # Copy ICU libraries if they exist separately
-    for lib in "libicuuc.a" "libicui18n.a"; do
-        if [ -f "$build_dir/obj/third_party/icu/$lib" ]; then
-            cp "$build_dir/obj/third_party/icu/$lib" "$OUTPUT_DIR/libs/$platform/$arch/$lib"
-        fi
-    done
 }
 
 if [ -n "$PLATFORM" ] && [ -n "$ARCH" ] && [ "$PLATFORM" != "bundle" ]; then
