@@ -257,7 +257,7 @@ jobs:
             '    <requireLicenseAcceptance>false</requireLicenseAcceptance>',
             '    <description>V8 native Windows x64 static library and headers for X.Script.</description>',
             '    <tags>v8 native javascript win-x64 clangcl msvc</tags>',
-            "    <repository type=\"git\" url=\"https://chromium.googlesource.com/v8/v8.git\" commit=\"$commit\" />",
+            ('    <repository type="git" url="https://chromium.googlesource.com/v8/v8.git" commit="{0}" />' -f $commit),
             '  </metadata>',
             '</package>'
           )
