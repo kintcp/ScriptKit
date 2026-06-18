@@ -198,6 +198,50 @@ jobs:
           $outPath = Join-Path $env:V8_DIR "build\util\LASTCHANGE.committime"
           [System.IO.File]::WriteAllText($outPath, $timestamp)
 
+      - name: Patch JSInterceptorMap Torque layout
+        shell: pwsh
+        run: |
+          # V8 14/15 currently has a JSInterceptorMap Torque/C++ layout mismatch on this Windows configuration.
+          # The C++ class already owns extended_padding_[kTaggedSize - 1]; leaving the same padding in .tq
+          # makes Torque generate offsets that are 3 bytes too large, e.g. 83 vs 80.
+          Set-Location $env:V8_DIR
+
+          $tqFiles = @(Get-ChildItem -Path "src" -Recurse -Filter "*.tq" | Where-Object {
+            $text = Get-Content $_.FullName -Raw
+            ($text -match "JSInterceptorMap") -or
+            (($text -match "named_interceptor:\s*InterceptorInfo") -and ($text -match "indexed_interceptor:\s*InterceptorInfo"))
+          })
+
+          if ($tqFiles.Count -eq 0) {
+            throw "Cannot find JSInterceptorMap Torque source. Do not continue; the build will fail with generated offset static_asserts."
+          }
+
+          foreach ($file in $tqFiles) {
+            $content = Get-Content $file.FullName -Raw
+            $patched = $content
+
+            $patched = [regex]::Replace(
+              $patched,
+              '\s*@ifnot\(TAGGED_SIZE_8_BYTES\)\s+extended_padding\[[0-9]+\]:\s*uint8;',
+              ''
+            )
+
+            $patched = [regex]::Replace(
+              $patched,
+              '\s*@if\(TAGGED_SIZE_8_BYTES\)\s+extended_padding\[[0-9]+\]:\s*uint8;',
+              ''
+            )
+
+            if ($patched -eq $content) {
+              Write-Host "Found candidate but no extended_padding lines to remove: $($file.FullName)"
+              continue
+            }
+
+            Set-Content -Path $file.FullName -Value $patched -Encoding UTF8
+            Write-Host "Patched JSInterceptorMap Torque layout: $($file.FullName)"
+            git diff -- $file.FullName
+          }
+
       - name: Generate V8 build files
         shell: pwsh
         run: |
@@ -253,6 +297,7 @@ jobs:
           v8_enable_webassembly=true
           v8_imminent_deprecation_warnings=false
           v8_monolithic=true
+          v8_generate_external_defines_header=true
           v8_use_external_startup_data=false
           '@
 
@@ -302,6 +347,14 @@ jobs:
 
           Copy-Item "$env:V8_DIR\include\*" $includeDir -Recurse -Force
 
+          $v8GnHeader = "$env:V8_DIR\out.gn\win.x64.release\gen\include\v8-gn.h"
+          if (-not (Test-Path $v8GnHeader)) {
+            Write-Host "Searching for generated v8-gn.h..."
+            Get-ChildItem "$env:V8_DIR\out.gn\win.x64.release\gen" -Recurse -Filter "v8-gn.h" | ForEach-Object { Write-Host $_.FullName }
+            throw "v8-gn.h not found. Keep v8_generate_external_defines_header=true."
+          }
+          Copy-Item $v8GnHeader (Join-Path $includeDir "v8-gn.h") -Force
+
           $libCandidates = @(
             "$env:V8_DIR\out.gn\win.x64.release\obj\v8_monolith.lib",
             "$env:V8_DIR\out.gn\win.x64.release\v8_monolith.lib"
@@ -343,6 +396,7 @@ jobs:
               <ClCompile>
                 <LanguageStandard>stdcpp20</LanguageStandard>
                 <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+                <PreprocessorDefinitions>V8_GN_HEADER;%(PreprocessorDefinitions)</PreprocessorDefinitions>
               </ClCompile>
             </ItemDefinitionGroup>
           </Project>
@@ -446,6 +500,7 @@ jobs:
             "build/native/$env:PACKAGE_ID.props"
             "build/native/$env:PACKAGE_ID.targets"
             "build/native/include/v8.h"
+            "build/native/include/v8-gn.h"
             "build/native/lib/win-x64/v8_monolith.lib"
           )
 
@@ -504,7 +559,7 @@ jobs:
 
           $cmd = @"
           call "$vsDevCmd" -arch=x64 -host_arch=x64 && ^
-          clang-cl /nologo /std:c++20 /EHsc /MD ^
+          clang-cl /nologo /std:c++20 /EHsc /MD /DV8_GN_HEADER ^
             /I "$nativeDir\include" "$sourcePath" ^
             /link /LIBPATH:"$nativeDir\lib\win-x64" ^
             v8_monolith.lib winmm.lib dbghelp.lib shlwapi.lib advapi32.lib ws2_32.lib ^
