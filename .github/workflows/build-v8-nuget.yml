@@ -235,11 +235,13 @@ jobs:
             'v8_target_cpu="x64"'
             "is_component_build=false"
             "v8_monolithic=true"
+            "v8_static_library=true"
             "v8_use_external_startup_data=false"
             "v8_enable_i18n_support=false"
             "v8_enable_sandbox=false"
             "treat_warnings_as_errors=false"
             "symbol_level=0"
+            "use_custom_libcxx=false"
           ) -join " "
 
           Write-Host "GN: $gn"
@@ -252,7 +254,7 @@ jobs:
             throw "gn gen failed with exit code $LASTEXITCODE"
           }
 
-      - name: Build v8_monolith
+      - name: Build v8_monolith and v8_libplatform
         shell: pwsh
         run: |
           $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
@@ -266,7 +268,7 @@ jobs:
             throw "ninja.exe not found: $ninja"
           }
 
-          & $ninja -C "out/x64.release" v8_monolith
+          & $ninja -C "out/x64.release" v8_monolith v8_libplatform
 
           if ($LASTEXITCODE -ne 0) {
             throw "ninja failed with exit code $LASTEXITCODE"
@@ -285,13 +287,13 @@ jobs:
 
           Copy-Item "$env:V8_DIR\include\*" $includeDir -Recurse -Force
 
+          # Find and copy v8_monolith.lib
           $libCandidates = @(
             "$env:V8_DIR\out\x64.release\obj\v8_monolith.lib",
             "$env:V8_DIR\out\x64.release\v8_monolith.lib"
           )
 
           $libSource = $null
-
           foreach ($candidate in $libCandidates) {
             if (Test-Path $candidate) {
               $libSource = $candidate
@@ -300,15 +302,32 @@ jobs:
           }
 
           if (-not $libSource) {
-            Write-Host "Searching for v8_monolith.lib..."
-            Get-ChildItem "$env:V8_DIR\out\x64.release" -Recurse -Filter "v8_monolith.lib" | ForEach-Object {
-              Write-Host $_.FullName
-            }
-
             throw "v8_monolith.lib not found."
           }
 
           Copy-Item $libSource (Join-Path $libDir "v8_monolith.lib") -Force
+
+          # Find and copy v8_libplatform.lib
+          $platformLibCandidates = @(
+            "$env:V8_DIR\out\x64.release\obj\v8_libplatform.lib",
+            "$env:V8_DIR\out\x64.release\v8_libplatform.lib",
+            "$env:V8_DIR\out\x64.release\obj\v8\v8_libplatform.lib"
+          )
+
+          $platformLibSource = $null
+          foreach ($candidate in $platformLibCandidates) {
+            if (Test-Path $candidate) {
+              $platformLibSource = $candidate
+              break
+            }
+          }
+
+          if ($platformLibSource) {
+            Copy-Item $platformLibSource (Join-Path $libDir "v8_libplatform.lib") -Force
+            Write-Host "Found and copied v8_libplatform.lib"
+          } else {
+            Write-Host "Warning: v8_libplatform.lib not found, it might be bundled within v8_monolith.lib"
+          }
 
           $propsPath = Join-Path $buildNativeDir "$env:PACKAGE_ID.props"
           $targetsPath = Join-Path $buildNativeDir "$env:PACKAGE_ID.targets"
@@ -332,7 +351,7 @@ jobs:
             <ItemDefinitionGroup Condition="'$(Platform)' == 'x64'">
               <Link>
                 <AdditionalLibraryDirectories>$(MSBuildThisFileDirectory)lib\win-x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-                <AdditionalDependencies>v8_monolith.lib;winmm.lib;dbghelp.lib;shlwapi.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+                <AdditionalDependencies>v8_monolith.lib;v8_libplatform.lib;winmm.lib;dbghelp.lib;shlwapi.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
               </Link>
             </ItemDefinitionGroup>
           </Project>
@@ -349,8 +368,8 @@ jobs:
               <authors>X</authors>
               <owners>X</owners>
               <requireLicenseAcceptance>false</requireLicenseAcceptance>
-              <description>V8 native Windows x64 static library and headers for ScriptKit.</description>
-              <tags>v8 native javascript win-x64</tags>
+              <description>V8 native Windows x64 static library and headers for ScriptKit. Built with MSVC STL ABI (use_custom_libcxx=false).</description>
+              <tags>v8 native javascript win-x64 static msvc</tags>
               <repository type="git" url="$env:V8_REPO" commit="$commit" />
             </metadata>
           </package>
@@ -425,6 +444,7 @@ jobs:
             "build/native/$env:PACKAGE_ID.targets"
             "build/native/include/v8.h"
             "build/native/lib/win-x64/v8_monolith.lib"
+            "build/native/lib/win-x64/v8_libplatform.lib"
           )
 
           foreach ($item in $required) {
