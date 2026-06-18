@@ -8,7 +8,7 @@ on:
         required: true
         default: "14.3.127.5"
       v8_ref:
-        description: "V8 git ref, branch, tag, or commit"
+        description: "V8 git ref, tag, branch, or commit"
         required: true
         default: "14.3.127.5"
       publish:
@@ -29,25 +29,22 @@ permissions:
   packages: write
 
 jobs:
-  build:
-    name: Build V8 Windows x64 NuGet
+  build-win-x64-nuget:
+    name: Build Windows x64 NuGet
     runs-on: windows-2022
 
     env:
       PACKAGE_ID: X.Script.V8
-      V8_REPO: https://chromium.googlesource.com/v8/v8.git
-      DEPOT_TOOLS_DIR: ${{ github.workspace }}\depot_tools
-      V8_DIR: ${{ github.workspace }}\v8
-      OUT_DIR: ${{ github.workspace }}\artifacts\v8-nuget
-      WORK_DIR: ${{ github.workspace }}\artifacts\v8-nuget\work
+      DEPOT_TOOLS_REPO: https://chromium.googlesource.com/chromium/tools/depot_tools.git
       DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
       GYP_MSVS_VERSION: "2022"
+      BUILD_DIR: out.gn/win.x64.release
 
     steps:
-      - name: Checkout project
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Resolve version and V8 ref
+      - name: Resolve package version
         shell: pwsh
         run: |
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
@@ -59,8 +56,8 @@ jobs:
             $v8Ref = $version
           }
 
-          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "V8_REF=$v8Ref" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "V8_REF=$v8Ref" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           Write-Host "VERSION=$version"
           Write-Host "V8_REF=$v8Ref"
@@ -70,432 +67,192 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Locate Visual Studio
+      - name: Setup depot_tools path
         shell: pwsh
         run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          "$env:GITHUB_WORKSPACE\depot_tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "DEPOT_TOOLS_WIN_TOOLCHAIN=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "GYP_MSVS_VERSION=2022" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          if (-not (Test-Path $vswhere)) {
-            throw "vswhere.exe not found"
-          }
-
-          $vsPath = & $vswhere `
-            -latest `
-            -products * `
-            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-            -property installationPath
-
-          if (-not $vsPath) {
-            throw "Visual Studio with VC tools not found"
-          }
-
-          $vsPathForGn = $vsPath -replace "\\", "/"
-
-          "VS2022_INSTALL=$vsPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "VS2022_INSTALL_GN=$vsPathForGn" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "vs2022_install=$vsPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-          Write-Host "VS2022_INSTALL=$vsPath"
-          Write-Host "VS2022_INSTALL_GN=$vsPathForGn"
-
-      - name: Cache depot_tools
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.DEPOT_TOOLS_DIR }}
-          key: depot-tools-windows-${{ runner.os }}-v4
-
-      - name: Install depot_tools
-        shell: pwsh
+      - name: Prepare V8 environment
+        shell: bash
         run: |
+          set -euxo pipefail
+
           git config --global core.longpaths true
+          git config --global depot-tools.allowGlobalGitConfig true
 
-          if (-not (Test-Path "$env:DEPOT_TOOLS_DIR\.git")) {
-            if (Test-Path "$env:DEPOT_TOOLS_DIR") {
-              Remove-Item "$env:DEPOT_TOOLS_DIR" -Recurse -Force
-            }
+          git clone "$DEPOT_TOOLS_REPO" depot_tools
 
-            git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "$env:DEPOT_TOOLS_DIR"
-          } else {
-            Push-Location "$env:DEPOT_TOOLS_DIR"
-            try {
-              git fetch --depth=1 origin main
-              git checkout main
-              git reset --hard origin/main
-            } finally {
-              Pop-Location
-            }
-          }
+          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          export DEPOT_TOOLS_WIN_TOOLCHAIN=0
+          export GYP_MSVS_VERSION=2022
 
-          "$env:DEPOT_TOOLS_DIR" | Out-File -FilePath $env:GITHUB_PATH -Append
+          gclient fetch v8
 
-          Write-Host "Depot tools ready at $env:DEPOT_TOOLS_DIR"
+          cd "$GITHUB_WORKSPACE/v8"
 
-      - name: Cache V8 checkout
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.V8_DIR }}
-          key: v8-checkout-windows-${{ env.V8_REF }}-v5
-          restore-keys: |
-            v8-checkout-windows-${{ env.V8_REF }}-
-            v8-checkout-windows-
+          echo "Checkout V8 ref: $V8_REF"
+          git checkout "$V8_REF"
 
-      - name: Fetch V8 with depot_tools
-        shell: cmd
-        run: |
-          set PATH=%DEPOT_TOOLS_DIR%;%PATH%
-          set DEPOT_TOOLS_WIN_TOOLCHAIN=0
-          set GYP_MSVS_VERSION=2022
-
-          cd /d "%GITHUB_WORKSPACE%"
-
-          if not exist "%V8_DIR%\.git" (
-            echo V8 checkout cache miss. Running fetch v8...
-            fetch --nohooks v8
-          ) else (
-            echo V8 checkout cache hit.
-          )
-
-          cd /d "%V8_DIR%"
-
-          git fetch origin --tags
-          git checkout "%V8_REF%"
+          cat > "$GITHUB_WORKSPACE/.gclient" <<'EOF'
+solutions = [
+  {
+    "name": "v8",
+    "url": "https://chromium.googlesource.com/v8/v8.git",
+    "managed": False,
+    "custom_deps": {
+      "v8/test/benchmarks/data": None,
+      "v8/test/mozilla/data": None,
+      "v8/test/test262/data": None,
+      "v8/test/wasm-js/data": None,
+    },
+  },
+]
+EOF
 
           gclient sync -D --force --reset
-          gclient runhooks
 
-          echo "Generating LASTCHANGE"
-          python3 build\util\lastchange.py -o build\util\LASTCHANGE
-
-          echo V8 commit:
+          echo "V8 commit:"
           git rev-parse HEAD
           git log -1 --oneline
 
-          echo Checking V8 tools:
-
-          if not exist "%V8_DIR%\buildtools\win\gn.exe" (
-            echo Missing %V8_DIR%\buildtools\win\gn.exe
-            dir /s /b "%V8_DIR%\buildtools"
-            exit /b 1
-          )
-
-          if not exist "%V8_DIR%\third_party\ninja\ninja.exe" (
-            echo Missing %V8_DIR%\third_party\ninja\ninja.exe
-            dir /s /b "%V8_DIR%\third_party\ninja"
-            exit /b 1
-          )
-
-          "%V8_DIR%\buildtools\win\gn.exe" --version
-          "%V8_DIR%\third_party\ninja\ninja.exe" --version
-
-      - name: Resolve V8 commit
+      - name: Write GN args
         shell: pwsh
         run: |
-          $commit = git -C "$env:V8_DIR" rev-parse HEAD
-          "V8_COMMIT=$commit" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "V8_COMMIT=$commit"
-
-          $timestamp = git -C "$env:V8_DIR" log -1 --format="%ct"
-          $outPath = Join-Path $env:V8_DIR "build\util\LASTCHANGE.committime"
-          [System.IO.File]::WriteAllText($outPath, $timestamp)
-
-      - name: Patch JSInterceptorMap C++ layout
-        shell: pwsh
-        run: |
-          # Do NOT delete padding from js-interceptor-map.tq.
-          # The Torque file is the layout source of truth for generated offsets.
-          # On this Windows/MSVC-STL build the C++ layout is 3 bytes smaller:
-          #   Torque: named/indexed/size = 83/91/99
-          #   C++:    named/indexed/size = 80/88/96
-          # So patch the C++ object layout to match Torque, not the other way around.
-          Set-Location $env:V8_DIR
-
-          $tq = "src\objects\js-interceptor-map.tq"
-          $h = "src\objects\js-interceptor-map.h"
-
-          if (-not (Test-Path $tq)) {
-            Write-Host "No js-interceptor-map.tq in this V8 checkout; no JSInterceptorMap layout patch needed."
-            exit 0
-          }
-
-          if (-not (Test-Path $h)) {
-            throw "Found $tq but cannot find $h"
-          }
-
-          # In case a previous run or local patch touched the Torque file, restore it.
-          # Padding must stay in .tq; otherwise Torque itself fails with an unaligned field error.
-          git checkout -- $tq
-
-          $content = Get-Content $h -Raw
-          $patched = $content
-
-          if ($content -match "xscript_torque_layout_padding_") {
-            Write-Host "JSInterceptorMap C++ layout patch already present."
-          } elseif ($content -match "extended_padding_") {
-            # Newer layout: header already has extended_padding_, but it starts 3 bytes too early.
-            # Insert 3 bytes before it so offsetof(extended_padding_) matches Torque.
-            $patched = [regex]::Replace(
-              $content,
-              '(?m)^(\s*)(uint8_t\s+extended_padding_\[[^\]]+\];)',
-              '$1uint8_t xscript_torque_layout_padding_[3];' + "`r`n" + '$1$2',
-              1
-            )
-          } else {
-            # Older layout: header has named/indexed interceptors directly after Map.
-            # Insert the 3-byte padding field that Torque accounts for.
-            $patched = [regex]::Replace(
-              $content,
-              '(?m)^(\s*)(TaggedMember(?:<[^>]+>)?\s+named_interceptor_;)',
-              '$1uint8_t extended_padding_[3];' + "`r`n" + '$1$2',
-              1
-            )
-          }
-
-          if ($patched -eq $content -and $content -notmatch "xscript_torque_layout_padding_") {
-            Write-Host "----- $h -----"
-            Get-Content $h | Select-Object -First 120
-            throw "Failed to patch JSInterceptorMap C++ layout; expected extended_padding_ or named_interceptor_ field was not found."
-          }
-
-          Set-Content -Path $h -Value $patched -Encoding UTF8
-
-          Write-Host "Patched JSInterceptorMap C++ layout:"
-          git diff -- $h $tq
-
-      - name: Generate V8 build files
-        shell: pwsh
-        run: |
-          $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
-          $env:GYP_MSVS_VERSION = "2022"
-
-          Set-Location $env:V8_DIR
-
-          $gn = Join-Path $env:V8_DIR "buildtools\win\gn.exe"
-
-          if (-not (Test-Path $gn)) {
-            throw "gn.exe not found: $gn"
-          }
-
-          $buildDir = "out.gn/win.x64.release"
+          $buildDir = Join-Path $env:GITHUB_WORKSPACE "v8\${env:BUILD_DIR}"
 
           if (Test-Path $buildDir) {
-            Write-Host "Removing old build output: $buildDir"
             Remove-Item $buildDir -Recurse -Force
           }
 
           New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 
-          # Keep this aligned with haroel/v8-build args.win.x64.release.gn for V8 14.3.127.5.
-          $gnArgs = @'
-          target_os="win"
-          target_cpu="x64"
-          v8_target_cpu="x64"
-          clang_use_chrome_plugins=false
-          chrome_pgo_phase=false
-          dcheck_always_on=false
-          enable_rust=false
-          is_cfi=false
-          is_asan=false
-          is_clang=true
-          is_component_build=false
-          is_debug=false
-          strip_debug_info=true
-          symbol_level=0
-          treat_warnings_as_errors=false
-          use_custom_libcxx=false
-          use_rtti=false
-          use_sysroot=false
-          v8_deprecation_warnings=false
-          v8_enable_builtins_optimization=true
-          v8_enable_gdbjit=false
-          v8_enable_i18n_support=false
-          v8_enable_pointer_compression=false
-          v8_enable_sandbox=false
-          v8_enable_snapshot_compression=false
-          v8_enable_temporal_support=false
-          v8_enable_test_features=false
-          v8_enable_webassembly=true
-          v8_imminent_deprecation_warnings=false
-          v8_monolithic=true
-          v8_generate_external_defines_header=true
-          v8_use_external_startup_data=false
-          '@
+          $args = @'
+target_os="win" target_cpu = "x64" v8_target_cpu="x64" clang_use_chrome_plugins=false chrome_pgo_phase=false dcheck_always_on=false enable_rust=false is_cfi=false is_asan=false is_clang=true is_component_build=false is_debug=false strip_debug_info=true symbol_level=0 treat_warnings_as_errors=false use_custom_libcxx=false use_rtti=false use_sysroot=false v8_deprecation_warnings=false v8_enable_builtins_optimization=true v8_enable_gdbjit=false v8_enable_i18n_support=false v8_enable_pointer_compression=false v8_enable_sandbox=false v8_enable_snapshot_compression=false v8_enable_temporal_support=false v8_enable_test_features=false v8_enable_webassembly=true v8_imminent_deprecation_warnings=false v8_monolithic=true v8_use_external_startup_data=false
+'@
 
-          $gnArgs = ($gnArgs -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join " "
+          $argsPath = Join-Path $buildDir "args.gn"
+          Set-Content -Path $argsPath -Value $args -Encoding ASCII
 
-          Write-Host "GN: $gn"
-          Write-Host "Build dir: $buildDir"
-          Write-Host "Args: $gnArgs"
+          Write-Host "args.gn:"
+          Get-Content $argsPath
 
-          & $gn gen $buildDir "--args=$gnArgs"
+      - name: Build V8 monolith
+        shell: bash
+        run: |
+          set -euxo pipefail
 
-          if ($LASTEXITCODE -ne 0) {
-            throw "gn gen failed with exit code $LASTEXITCODE"
-          }
+          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          export DEPOT_TOOLS_WIN_TOOLCHAIN=0
+          export GYP_MSVS_VERSION=2022
 
-          & $gn args --list $buildDir | Out-File -FilePath (Join-Path $buildDir "args.full.txt") -Encoding UTF8
-      - name: Build v8_monolith
+          cd "$GITHUB_WORKSPACE/v8"
+
+          gn gen "$BUILD_DIR"
+          ninja v8_monolith -C "$BUILD_DIR"
+          gn args --list "$BUILD_DIR" > "$BUILD_DIR/args.full.txt"
+
+          ls -lh "$BUILD_DIR/obj/v8_monolith.lib"
+          test -f "$BUILD_DIR/obj/v8_monolith.lib"
+
+      - name: Prepare NuGet layout
         shell: pwsh
         run: |
-          $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
-          $env:GYP_MSVS_VERSION = "2022"
+          $root = Join-Path $env:GITHUB_WORKSPACE "nuget-root"
+          $buildNative = Join-Path $root "build\native"
+          $includeDir = Join-Path $buildNative "include"
+          $libDir = Join-Path $buildNative "lib\win-x64"
+          $buildInfoDir = Join-Path $buildNative "build-info"
 
-          Set-Location $env:V8_DIR
-
-          $ninja = Join-Path $env:V8_DIR "third_party\ninja\ninja.exe"
-
-          if (-not (Test-Path $ninja)) {
-            throw "ninja.exe not found: $ninja"
+          if (Test-Path $root) {
+            Remove-Item $root -Recurse -Force
           }
-
-          & $ninja -C "out.gn/win.x64.release" v8_monolith
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "ninja failed with exit code $LASTEXITCODE"
-          }
-
-      - name: Prepare NuGet package files
-        shell: pwsh
-        run: |
-          $pkgRoot = Join-Path $env:WORK_DIR "package"
-          $buildNativeDir = Join-Path $pkgRoot "build\native"
-          $includeDir = Join-Path $buildNativeDir "include"
-          $libDir = Join-Path $buildNativeDir "lib\win-x64"
 
           New-Item -ItemType Directory -Force -Path $includeDir | Out-Null
           New-Item -ItemType Directory -Force -Path $libDir | Out-Null
-
-          Copy-Item "$env:V8_DIR\include\*" $includeDir -Recurse -Force
-
-          $v8GnHeader = "$env:V8_DIR\out.gn\win.x64.release\gen\include\v8-gn.h"
-          if (-not (Test-Path $v8GnHeader)) {
-            Write-Host "Searching for generated v8-gn.h..."
-            Get-ChildItem "$env:V8_DIR\out.gn\win.x64.release\gen" -Recurse -Filter "v8-gn.h" | ForEach-Object { Write-Host $_.FullName }
-            throw "v8-gn.h not found. Keep v8_generate_external_defines_header=true."
-          }
-          Copy-Item $v8GnHeader (Join-Path $includeDir "v8-gn.h") -Force
-
-          $libCandidates = @(
-            "$env:V8_DIR\out.gn\win.x64.release\obj\v8_monolith.lib",
-            "$env:V8_DIR\out.gn\win.x64.release\v8_monolith.lib"
-          )
-
-          $libSource = $null
-
-          foreach ($candidate in $libCandidates) {
-            if (Test-Path $candidate) {
-              $libSource = $candidate
-              break
-            }
-          }
-
-          if (-not $libSource) {
-            Write-Host "Searching for v8_monolith.lib..."
-            Get-ChildItem "$env:V8_DIR\out.gn\win.x64.release" -Recurse -Filter "v8_monolith.lib" | ForEach-Object {
-              Write-Host $_.FullName
-            }
-
-            throw "v8_monolith.lib not found."
-          }
-
-          Copy-Item $libSource (Join-Path $libDir "v8_monolith.lib") -Force
-
-          $buildInfoDir = Join-Path $buildNativeDir "build-info"
           New-Item -ItemType Directory -Force -Path $buildInfoDir | Out-Null
-          Copy-Item "$env:V8_DIR\out.gn\win.x64.release\args.gn" (Join-Path $buildInfoDir "args.gn") -Force
-          Copy-Item "$env:V8_DIR\out.gn\win.x64.release\args.full.txt" (Join-Path $buildInfoDir "args.full.txt") -Force
 
-          $propsPath = Join-Path $buildNativeDir "$env:PACKAGE_ID.props"
-          $targetsPath = Join-Path $buildNativeDir "$env:PACKAGE_ID.targets"
-          $nuspecPath = Join-Path $env:WORK_DIR "$env:PACKAGE_ID.nuspec"
+          Copy-Item "$env:GITHUB_WORKSPACE\v8\include\*" $includeDir -Recurse -Force
+          Copy-Item "$env:GITHUB_WORKSPACE\v8\${env:BUILD_DIR}\obj\v8_monolith.lib" "$libDir\v8_monolith.lib" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE\v8\${env:BUILD_DIR}\args.gn" "$buildInfoDir\args.gn" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE\v8\${env:BUILD_DIR}\args.full.txt" "$buildInfoDir\args.full.txt" -Force
 
-          $propsContent = @'
-          <?xml version="1.0" encoding="utf-8"?>
-          <Project>
-            <ItemDefinitionGroup>
-              <ClCompile>
-                <LanguageStandard>stdcpp20</LanguageStandard>
-                <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-                <PreprocessorDefinitions>V8_GN_HEADER;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-              </ClCompile>
-            </ItemDefinitionGroup>
-          </Project>
-          '@
+          $props = @'
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+</Project>
+'@
 
-          $targetsContent = @'
-          <?xml version="1.0" encoding="utf-8"?>
-          <Project>
-            <ItemDefinitionGroup Condition="'$(Platform)' == 'x64'">
-              <Link>
-                <AdditionalLibraryDirectories>$(MSBuildThisFileDirectory)lib\win-x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-                <AdditionalDependencies>v8_monolith.lib;winmm.lib;dbghelp.lib;shlwapi.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
-              </Link>
-            </ItemDefinitionGroup>
-          </Project>
-          '@
+          $targets = @'
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <ItemDefinitionGroup Condition="'$(Platform)' == 'x64'">
+    <Link>
+      <AdditionalLibraryDirectories>$(MSBuildThisFileDirectory)lib\win-x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>v8_monolith.lib;winmm.lib;dbghelp.lib;shlwapi.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>
+'@
 
-          $commit = git -C "$env:V8_DIR" rev-parse HEAD
+          Set-Content -Path "$buildNative\$env:PACKAGE_ID.props" -Value $props -Encoding UTF8
+          Set-Content -Path "$buildNative\$env:PACKAGE_ID.targets" -Value $targets -Encoding UTF8
 
-          $nuspecContent = @"
-          <?xml version="1.0" encoding="utf-8"?>
-          <package>
-            <metadata>
-              <id>$env:PACKAGE_ID</id>
-              <version>$env:VERSION</version>
-              <authors>X</authors>
-              <owners>X</owners>
-              <requireLicenseAcceptance>false</requireLicenseAcceptance>
-              <description>V8 native Windows x64 static library and headers for X.Script.</description>
-              <tags>v8 native javascript win-x64</tags>
-              <repository type="git" url="$env:V8_REPO" commit="$commit" />
-            </metadata>
-          </package>
-          "@
+          $commit = git -C "$env:GITHUB_WORKSPACE\v8" rev-parse HEAD
 
-          $propsContent = $propsContent -replace "^[ ]{10}", ""
-          $targetsContent = $targetsContent -replace "^[ ]{10}", ""
-          $nuspecContent = $nuspecContent -replace "^[ ]{10}", ""
+          $nuspec = @"
+<?xml version="1.0" encoding="utf-8"?>
+<package>
+  <metadata>
+    <id>$env:PACKAGE_ID</id>
+    <version>$env:VERSION</version>
+    <authors>X.Script</authors>
+    <owners>X.Script</owners>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>V8 native Windows x64 static library and headers for X.Script.</description>
+    <tags>v8 native javascript win-x64 clangcl msvc</tags>
+    <repository type="git" url="https://chromium.googlesource.com/v8/v8.git" commit="$commit" />
+  </metadata>
+</package>
+"@
 
-          Set-Content -Path $propsPath -Value $propsContent -Encoding UTF8
-          Set-Content -Path $targetsPath -Value $targetsContent -Encoding UTF8
-          Set-Content -Path $nuspecPath -Value $nuspecContent -Encoding UTF8
+          Set-Content -Path "$root\$env:PACKAGE_ID.nuspec" -Value $nuspec -Encoding UTF8
 
-          Write-Host "Package layout:"
-          Get-ChildItem $pkgRoot -Recurse | ForEach-Object {
+          Write-Host "NuGet layout:"
+          Get-ChildItem $root -Recurse | ForEach-Object {
             Write-Host $_.FullName
           }
 
       - name: Pack NuGet
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path $env:OUT_DIR | Out-Null
+          $outDir = Join-Path $env:GITHUB_WORKSPACE "artifacts"
+          $root = Join-Path $env:GITHUB_WORKSPACE "nuget-root"
+          $nupkg = Join-Path $outDir "$env:PACKAGE_ID.$env:VERSION.nupkg"
 
-          $nupkg = Join-Path $env:OUT_DIR "$env:PACKAGE_ID.$env:VERSION.nupkg"
-          $nupkgRoot = Join-Path $env:WORK_DIR "nupkg-root"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
           if (Test-Path $nupkg) {
             Remove-Item $nupkg -Force
           }
 
-          if (Test-Path $nupkgRoot) {
-            Remove-Item $nupkgRoot -Recurse -Force
-          }
-
-          New-Item -ItemType Directory -Force -Path $nupkgRoot | Out-Null
-
-          Copy-Item "$env:WORK_DIR\$env:PACKAGE_ID.nuspec" (Join-Path $nupkgRoot "$env:PACKAGE_ID.nuspec") -Force
-          Copy-Item "$env:WORK_DIR\package\build" (Join-Path $nupkgRoot "build") -Recurse -Force
-
-          Push-Location $nupkgRoot
-
+          Push-Location $root
           try {
             Compress-Archive -Path "$env:PACKAGE_ID.nuspec", "build" -DestinationPath $nupkg -Force
           } finally {
             Pop-Location
           }
 
-          "NUPKG=$nupkg" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "NUPKG=$nupkg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          Write-Host "Created package:"
+          Write-Host "Created NuGet package:"
           Write-Host $nupkg
 
       - name: Verify NuGet content
@@ -503,30 +260,26 @@ jobs:
         run: |
           Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+          $required = @(
+            "$env:PACKAGE_ID.nuspec",
+            "build/native/$env:PACKAGE_ID.props",
+            "build/native/$env:PACKAGE_ID.targets",
+            "build/native/include/v8.h",
+            "build/native/include/libplatform/libplatform.h",
+            "build/native/lib/win-x64/v8_monolith.lib",
+            "build/native/build-info/args.gn",
+            "build/native/build-info/args.full.txt"
+          )
+
           $zip = [System.IO.Compression.ZipFile]::OpenRead($env:NUPKG)
 
           try {
+            Write-Host "Package entries:"
             foreach ($entry in $zip.Entries) {
               Write-Host $entry.FullName
             }
-          } finally {
-            $zip.Dispose()
-          }
 
-          Write-Host "Checking required files..."
-
-          $required = @(
-            "build/native/$env:PACKAGE_ID.props"
-            "build/native/$env:PACKAGE_ID.targets"
-            "build/native/include/v8.h"
-            "build/native/include/v8-gn.h"
-            "build/native/lib/win-x64/v8_monolith.lib"
-          )
-
-          foreach ($item in $required) {
-            $zip = [System.IO.Compression.ZipFile]::OpenRead($env:NUPKG)
-
-            try {
+            foreach ($item in $required) {
               $found = $false
 
               foreach ($entry in $zip.Entries) {
@@ -537,60 +290,72 @@ jobs:
               }
 
               if (-not $found) {
-                throw "Required file missing from NuGet package: $item"
+                throw "Missing required package entry: $item"
               }
-            } finally {
-              $zip.Dispose()
             }
+          } finally {
+            $zip.Dispose()
           }
 
       - name: Native link smoke test
         shell: pwsh
         run: |
-          $testDir = Join-Path $env:WORK_DIR "smoke-test"
+          $testDir = Join-Path $env:GITHUB_WORKSPACE "smoke-test"
+
           if (Test-Path $testDir) {
             Remove-Item $testDir -Recurse -Force
           }
+
           New-Item -ItemType Directory -Force -Path $testDir | Out-Null
 
-          $sourcePath = Join-Path $testDir "main.cc"
-          $exePath = Join-Path $testDir "v8_smoke.exe"
-          $nativeDir = Join-Path $env:WORK_DIR "package\build\native"
+          $main = Join-Path $testDir "main.cc"
+          $exe = Join-Path $testDir "v8-smoke.exe"
+          $native = Join-Path $env:GITHUB_WORKSPACE "nuget-root\build\native"
 
           @'
-          #include <libplatform/libplatform.h>
-          #include <v8.h>
+#include <libplatform/libplatform.h>
+#include <v8.h>
 
-          int main() {
-            auto platform = v8::platform::NewDefaultPlatform();
-            v8::V8::InitializePlatform(platform.get());
-            v8::V8::Initialize();
-            v8::V8::Dispose();
-            v8::V8::DisposePlatform();
-            return 0;
+int main() {
+  auto platform = v8::platform::NewDefaultPlatform();
+  v8::V8::InitializePlatform(platform.get());
+  v8::V8::Initialize();
+  v8::V8::Dispose();
+  v8::V8::DisposePlatform();
+  return 0;
+}
+'@ | Set-Content -Path $main -Encoding UTF8
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+
+          if (-not $vsPath) {
+            throw "Visual Studio with VC tools not found"
           }
-          '@ | Set-Content -Path $sourcePath -Encoding UTF8
 
-          $vsDevCmd = Join-Path $env:VS2022_INSTALL "Common7\Tools\VsDevCmd.bat"
-          if (-not (Test-Path $vsDevCmd)) {
-            throw "VsDevCmd.bat not found: $vsDevCmd"
+          $devcmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
+
+          if (-not (Test-Path $devcmd)) {
+            throw "VsDevCmd.bat not found: $devcmd"
           }
 
           $cmd = @"
-          call "$vsDevCmd" -arch=x64 -host_arch=x64 && ^
-          clang-cl /nologo /std:c++20 /EHsc /MD /DV8_GN_HEADER ^
-            /I "$nativeDir\include" "$sourcePath" ^
-            /link /LIBPATH:"$nativeDir\lib\win-x64" ^
-            v8_monolith.lib winmm.lib dbghelp.lib shlwapi.lib advapi32.lib ws2_32.lib ^
-            /OUT:"$exePath"
-          "@
+call "$devcmd" -arch=x64 -host_arch=x64 && ^
+clang-cl /nologo /std:c++20 /EHsc /MD ^
+  /I "$native\include" "$main" ^
+  /link /LIBPATH:"$native\lib\win-x64" ^
+  v8_monolith.lib winmm.lib dbghelp.lib shlwapi.lib advapi32.lib ws2_32.lib ^
+  /OUT:"$exe"
+"@
 
           cmd.exe /c $cmd
+
           if ($LASTEXITCODE -ne 0) {
             throw "Native link smoke test failed with exit code $LASTEXITCODE"
           }
 
-          Write-Host "Native link smoke test passed: $exePath"
+          Write-Host "Native link smoke test passed:"
+          Write-Host $exe
 
       - name: Upload NuGet artifact
         uses: actions/upload-artifact@v4
