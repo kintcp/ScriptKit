@@ -125,6 +125,10 @@ jobs:
         run: |
           CHECKSUM=$(swift package compute-checksum artifacts/v8-spm/V8.xcframework.zip)
           URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/V8.xcframework.zip"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
           
           python3 -c "
           import re
@@ -135,10 +139,6 @@ jobs:
           with open('Package.swift', 'w') as f: f.write(content)
           "
           
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git checkout main
           # Apply the change again on main branch
           python3 -c "
           import re
