@@ -115,7 +115,7 @@ jobs:
       - name: Upload XCFramework
         uses: actions/upload-artifact@v4
         with:
-          name: ScriptKit.QuickJS-XCFramework
+          name: QuickJS-XCFramework
           path: artifacts/quickjs-spm/QuickJS.xcframework
 
       - name: Create Release
@@ -136,7 +136,7 @@ jobs:
           python3 -c "
           import re
           with open('Package.swift', 'r') as f: content = f.read()
-          pattern = r'(\.binaryTarget\(\s*name:\s*\"X\.Script\.QuickJS\",\s*)(?:path|url):.*?\)'
+          pattern = r'(\.binaryTarget\(\s*name:\s*\"QuickJS\",\s*)(?:path|url):.*?\)'
           replacement = r'\1url: \"$URL\",\n            checksum: \"$CHECKSUM\")'
           content = re.sub(pattern, replacement, content, flags=re.DOTALL)
           with open('Package.swift', 'w') as f: f.write(content)
@@ -150,11 +150,11 @@ jobs:
           python3 -c "
           import re
           with open('Package.swift', 'r') as f: content = f.read()
-          pattern = r'(\.binaryTarget\(\s*name:\s*\"X\.Script\.QuickJS\",\s*)(?:path|url):.*?\)'
+          pattern = r'(\.binaryTarget\(\s*name:\s*\"QuickJS\",\s*)(?:path|url):.*?\)'
           replacement = r'\1url: \"$URL\",\n            checksum: \"$CHECKSUM\")'
           content = re.sub(pattern, replacement, content, flags=re.DOTALL)
           with open('Package.swift', 'w') as f: f.write(content)
           "
           git add Package.swift
-          git commit -m "chore: update ScriptKit.QuickJS checksum for ${{ github.ref_name }}" || echo "No changes to commit"
+          git commit -m "chore: update QuickJS checksum for ${{ github.ref_name }}" || echo "No changes to commit"
           git push origin main
