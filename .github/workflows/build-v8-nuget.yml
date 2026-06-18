@@ -1,4 +1,4 @@
-name: Build X.Script.V8 NuGet
+name: Build X.Script.V8 NuGet Release
 
 on:
   workflow_dispatch:
@@ -29,8 +29,8 @@ permissions:
   packages: write
 
 jobs:
-  build-win-x64-nuget:
-    name: Build Windows x64 NuGet
+  build-win-x64-release-nuget:
+    name: Build Windows x64 Release NuGet
     runs-on: windows-2022
 
     env:
@@ -148,7 +148,7 @@ jobs:
           git rev-parse HEAD
           git log -1 --oneline
 
-      - name: Write GN args
+      - name: Write Release GN args
         shell: pwsh
         run: |
           $v8Dir = Join-Path $env:GITHUB_WORKSPACE "v8"
@@ -160,7 +160,8 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 
-          # Keep this line aligned with haroel/v8-build args.win.x64.release.gn.
+          # Release, static CRT (/MT), MSVC STL ABI, no V8 source patch.
+          # This intentionally follows the haroel/v8-build Windows release style.
           $args = 'target_os="win" target_cpu = "x64" v8_target_cpu="x64" clang_use_chrome_plugins=false chrome_pgo_phase=false dcheck_always_on=false enable_rust=false is_cfi=false is_asan=false is_clang=true is_component_build=false is_debug=false strip_debug_info=true symbol_level=0 treat_warnings_as_errors=false use_custom_libcxx=false use_rtti=false use_sysroot=false v8_deprecation_warnings=false v8_enable_builtins_optimization=true v8_enable_gdbjit=false v8_enable_i18n_support=false v8_enable_pointer_compression=false v8_enable_sandbox=false v8_enable_snapshot_compression=false v8_enable_temporal_support=false v8_enable_test_features=false v8_enable_webassembly=true v8_imminent_deprecation_warnings=false v8_monolithic=true v8_use_external_startup_data=false'
 
           $argsPath = Join-Path $buildDir "args.gn"
@@ -169,7 +170,7 @@ jobs:
           Write-Host "args.gn:"
           Get-Content $argsPath
 
-      - name: Build V8 monolith
+      - name: Build V8 monolith Release
         shell: cmd
         run: |
           set PATH=%GITHUB_WORKSPACE%\depot_tools;%PATH%
@@ -223,7 +224,9 @@ jobs:
             '  <ItemDefinitionGroup>',
             '    <ClCompile>',
             '      <LanguageStandard>stdcpp20</LanguageStandard>',
+            '      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>',
             '      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>',
+            '      <PreprocessorDefinitions>V8_ENABLE_CHECKS=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>',
             '    </ClCompile>',
             '  </ItemDefinitionGroup>',
             '</Project>'
@@ -232,6 +235,9 @@ jobs:
           $targetsLines = @(
             '<?xml version="1.0" encoding="utf-8"?>',
             '<Project>',
+            '  <Target Name="XScriptV8ValidatePlatform" BeforeTargets="PrepareForBuild">',
+            '    <Error Condition="''$(Platform)'' != ''x64''" Text="X.Script.V8 Release package only supports Platform=x64." />',
+            '  </Target>',
             '  <ItemDefinitionGroup Condition="''$(Platform)'' == ''x64''">',
             '    <Link>',
             '      <AdditionalLibraryDirectories>$(MSBuildThisFileDirectory)lib\win-x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>',
@@ -255,8 +261,8 @@ jobs:
             '    <authors>X.Script</authors>',
             '    <owners>X.Script</owners>',
             '    <requireLicenseAcceptance>false</requireLicenseAcceptance>',
-            '    <description>V8 native Windows x64 static library and headers for X.Script.</description>',
-            '    <tags>v8 native javascript win-x64 clangcl msvc</tags>',
+            '    <description>V8 native Windows x64 Release static library and headers for X.Script. This package uses MSVC STL ABI and static CRT /MT.</description>',
+            '    <tags>v8 native javascript win-x64 clangcl msvc release mt static-crt</tags>',
             ('    <repository type="git" url="https://chromium.googlesource.com/v8/v8.git" commit="{0}" />' -f $commit),
             '  </metadata>',
             '</package>'
@@ -336,7 +342,7 @@ jobs:
             $zip.Dispose()
           }
 
-      - name: Native link smoke test
+      - name: Native Release link smoke test
         shell: pwsh
         run: |
           $testDir = Join-Path $env:GITHUB_WORKSPACE "smoke-test"
@@ -380,21 +386,21 @@ jobs:
             throw "VsDevCmd.bat not found: $devcmd"
           }
 
-          $cmd = 'call "' + $devcmd + '" -arch=x64 -host_arch=x64 && clang-cl /nologo /std:c++20 /EHsc /MD /I "' + $native + '\include" "' + $main + '" /link /LIBPATH:"' + $native + '\lib\win-x64" v8_monolith.lib winmm.lib dbghelp.lib shlwapi.lib advapi32.lib ws2_32.lib /OUT:"' + $exe + '"'
+          $cmd = 'call "' + $devcmd + '" -arch=x64 -host_arch=x64 && clang-cl /nologo /std:c++20 /EHsc /MT /O2 /DNDEBUG /I "' + $native + '\include" "' + $main + '" /link /LIBPATH:"' + $native + '\lib\win-x64" v8_monolith.lib winmm.lib dbghelp.lib shlwapi.lib advapi32.lib ws2_32.lib /OUT:"' + $exe + '"'
 
           cmd.exe /c $cmd
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Native link smoke test failed with exit code $LASTEXITCODE"
+            throw "Native Release link smoke test failed with exit code $LASTEXITCODE"
           }
 
-          Write-Host "Native link smoke test passed:"
+          Write-Host "Native Release link smoke test passed:"
           Write-Host $exe
 
       - name: Upload NuGet artifact
         uses: actions/upload-artifact@v4
         with:
-          name: X.Script.V8-${{ env.VERSION }}
+          name: X.Script.V8-${{ env.VERSION }}-win-x64-release
           path: ${{ env.NUPKG }}
           if-no-files-found: error
 
