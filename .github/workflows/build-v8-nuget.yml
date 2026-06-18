@@ -242,6 +242,7 @@ jobs:
             "symbol_level=0"
             "use_custom_libcxx=false"
             "is_clang=true"
+            "v8_enable_sandbox=false"
           ) -join " "
 
           Write-Host "GN: $gn"
