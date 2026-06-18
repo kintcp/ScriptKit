@@ -6,11 +6,11 @@ on:
       version:
         description: "NuGet package version"
         required: true
-        default: "15.1.44"
+        default: "14.3.127.5"
       v8_ref:
         description: "V8 git ref, branch, tag, or commit"
         required: true
-        default: "15.1.44"
+        default: "14.3.127.5"
       publish:
         description: "Publish to GitHub Packages"
         required: true
@@ -254,6 +254,12 @@ jobs:
             "v8_allocation_foldstack=false"
             "enable_rust=false"
             "chrome_pgo_phase=false"
+            "dcheck_always_on=false"
+            "is_cfi=false"
+            "is_asan=false"
+            "strip_debug_info=true"
+            "v8_deprecation_warnings=false"
+            "v8_imminent_deprecation_warnings=false"
           ) -join " "
 
           Write-Host "GN: $gn"
