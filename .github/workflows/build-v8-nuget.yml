@@ -40,7 +40,7 @@ jobs:
       V8_DIR: ${{ github.workspace }}\v8
       OUT_DIR: ${{ github.workspace }}\artifacts\v8-nuget
       WORK_DIR: ${{ github.workspace }}\artifacts\v8-nuget\work
-      GN_ARGS_CACHE_VERSION: v10-msvc-stl
+      GN_ARGS_CACHE_VERSION: v11-msvc-stl-no-pc
       DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
       GYP_MSVS_VERSION: "2022"
 
@@ -202,7 +202,7 @@ jobs:
       - name: Cache V8 build output
         uses: actions/cache@v4
         with:
-          path: ${{ env.V8_DIR }}\out\x64.release
+          path: ${{ env.V8_DIR }}\out\x64.release.msvc-stl-nopc
           key: v8-build-win-x64-${{ env.V8_COMMIT }}-${{ env.GN_ARGS_CACHE_VERSION }}
           restore-keys: |
             v8-build-win-x64-${{ env.V8_COMMIT }}-
@@ -226,7 +226,7 @@ jobs:
             throw "VS2022_INSTALL_GN is empty"
           }
 
-          $buildDir = "out/x64.release"
+          $buildDir = "out/x64.release.msvc-stl-nopc"
 
           $gnArgs = @(
             "is_debug=false"
@@ -240,6 +240,10 @@ jobs:
             "v8_use_external_startup_data=false"
             "v8_enable_i18n_support=false"
             "v8_enable_sandbox=false"
+            "v8_enable_pointer_compression=false"
+            "v8_enable_pointer_compression_shared_cage=false"
+            "v8_enable_31bit_smis_on_64bit_arch=false"
+            "v8_enable_external_code_space=false"
             "v8_generate_external_defines_header=true"
             "treat_warnings_as_errors=false"
             "symbol_level=0"
@@ -248,6 +252,16 @@ jobs:
           Write-Host "GN: $gn"
           Write-Host "Build dir: $buildDir"
           Write-Host "Args: $gnArgs"
+
+          $argsPath = Join-Path $buildDir "args.gn"
+          if (Test-Path $argsPath) {
+            $oldArgs = Get-Content $argsPath -Raw
+            if ($oldArgs -notmatch "v8_enable_pointer_compression\s*=\s*false" -or
+                $oldArgs -notmatch "use_custom_libcxx\s*=\s*false") {
+              Write-Host "Build directory exists with incompatible GN args. Removing: $buildDir"
+              Remove-Item $buildDir -Recurse -Force
+            }
+          }
 
           & $gn gen $buildDir "--args=$gnArgs"
 
@@ -269,7 +283,7 @@ jobs:
             throw "ninja.exe not found: $ninja"
           }
 
-          & $ninja -C "out/x64.release" v8_monolith
+          & $ninja -C "out/x64.release.msvc-stl-nopc" v8_monolith
 
           if ($LASTEXITCODE -ne 0) {
             throw "ninja failed with exit code $LASTEXITCODE"
@@ -288,10 +302,10 @@ jobs:
 
           Copy-Item "$env:V8_DIR\include\*" $includeDir -Recurse -Force
 
-          $v8GnHeader = Join-Path $env:V8_DIR "out\x64.release\gen\include\v8-gn.h"
+          $v8GnHeader = Join-Path $env:V8_DIR "out\x64.release.msvc-stl-nopc\gen\include\v8-gn.h"
           if (-not (Test-Path $v8GnHeader)) {
             Write-Host "Searching for generated v8-gn.h..."
-            Get-ChildItem "$env:V8_DIR\out\x64.release\gen" -Recurse -Filter "v8-gn.h" | ForEach-Object {
+            Get-ChildItem "$env:V8_DIR\out\x64.release.msvc-stl-nopc\gen" -Recurse -Filter "v8-gn.h" | ForEach-Object {
               Write-Host $_.FullName
             }
             throw "v8-gn.h not found. Keep v8_generate_external_defines_header=true and make sure v8_config_headers is generated."
@@ -299,8 +313,8 @@ jobs:
           Copy-Item $v8GnHeader (Join-Path $includeDir "v8-gn.h") -Force
 
           $libCandidates = @(
-            "$env:V8_DIR\out\x64.release\obj\v8_monolith.lib",
-            "$env:V8_DIR\out\x64.release\v8_monolith.lib"
+            "$env:V8_DIR\out\x64.release.msvc-stl-nopc\obj\v8_monolith.lib",
+            "$env:V8_DIR\out\x64.release.msvc-stl-nopc\v8_monolith.lib"
           )
 
           $libSource = $null
@@ -314,7 +328,7 @@ jobs:
 
           if (-not $libSource) {
             Write-Host "Searching for v8_monolith.lib..."
-            Get-ChildItem "$env:V8_DIR\out\x64.release" -Recurse -Filter "v8_monolith.lib" | ForEach-Object {
+            Get-ChildItem "$env:V8_DIR\out\x64.release.msvc-stl-nopc" -Recurse -Filter "v8_monolith.lib" | ForEach-Object {
               Write-Host $_.FullName
             }
 
