@@ -105,6 +105,7 @@ build_quickjs() {
         "libregexp.c"
         "libunicode.c"
         "cutils.c"
+        "dtoa.c"
         "quickjs-libc.c"
         "libbf.c"
     )
