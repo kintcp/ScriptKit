@@ -1,4 +1,4 @@
-name: Build ScriptKit.V8 NuGet
+name: Build X.Script.V8 NuGet
 
 on:
   workflow_dispatch:
@@ -6,11 +6,11 @@ on:
       version:
         description: "NuGet package version"
         required: true
-        default: "14.3.127.5"
+        default: "15.1.44"
       v8_ref:
         description: "V8 git ref, branch, tag, or commit"
         required: true
-        default: "14.3.127.5"
+        default: "15.1.44"
       publish:
         description: "Publish to GitHub Packages"
         required: true
@@ -34,13 +34,13 @@ jobs:
     runs-on: windows-latest
 
     env:
-      PACKAGE_ID: ScriptKit.V8
+      PACKAGE_ID: X.Script.V8
       V8_REPO: https://chromium.googlesource.com/v8/v8.git
       DEPOT_TOOLS_DIR: ${{ github.workspace }}\depot_tools
       V8_DIR: ${{ github.workspace }}\v8
       OUT_DIR: ${{ github.workspace }}\artifacts\v8-nuget
       WORK_DIR: ${{ github.workspace }}\artifacts\v8-nuget\work
-      GN_ARGS_CACHE_VERSION: v14
+      GN_ARGS_CACHE_VERSION: v9
       DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
       GYP_MSVS_VERSION: "2022"
 
@@ -171,6 +171,23 @@ jobs:
           git rev-parse HEAD
           git log -1 --oneline
 
+          echo Checking V8 tools:
+
+          if not exist "%V8_DIR%\buildtools\win\gn.exe" (
+            echo Missing %V8_DIR%\buildtools\win\gn.exe
+            dir /s /b "%V8_DIR%\buildtools"
+            exit /b 1
+          )
+
+          if not exist "%V8_DIR%\third_party\ninja\ninja.exe" (
+            echo Missing %V8_DIR%\third_party\ninja\ninja.exe
+            dir /s /b "%V8_DIR%\third_party\ninja"
+            exit /b 1
+          )
+
+          "%V8_DIR%\buildtools\win\gn.exe" --version
+          "%V8_DIR%\third_party\ninja\ninja.exe" --version
+
       - name: Resolve V8 commit
         shell: pwsh
         run: |
@@ -210,59 +227,32 @@ jobs:
           }
 
           $buildDir = "out/x64.release"
-          
-          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 
-          # Exactly matching haroel/v8-build args.win.x64.release.gn
-          $gnArgsContent = @"
-          target_os="win"
-          target_cpu="x64"
-          v8_target_cpu="x64"
-          clang_use_chrome_plugins=false
-          chrome_pgo_phase=false
-          dcheck_always_on=false
-          enable_rust=false
-          is_cfi=false
-          is_asan=false
-          is_clang=true
-          is_component_build=false
-          is_debug=false
-          strip_debug_info=true
-          symbol_level=0
-          treat_warnings_as_errors=false
-          use_custom_libcxx=false
-          use_rtti=false
-          use_sysroot=false
-          v8_deprecation_warnings=false
-          v8_enable_builtins_optimization=true
-          v8_enable_gdbjit=false
-          v8_enable_i18n_support=false
-          v8_enable_pointer_compression=false
-          v8_enable_sandbox=false
-          v8_enable_snapshot_compression=false
-          v8_enable_temporal_support=false
-          v8_enable_test_features=false
-          v8_enable_webassembly=true
-          v8_imminent_deprecation_warnings=false
-          v8_monolithic=true
-          v8_use_external_startup_data=false
-          "@
-
-          $argsPath = Join-Path $env:V8_DIR "$buildDir\args.gn"
-          Set-Content -Path $argsPath -Value $gnArgsContent -Encoding UTF8
+          $gnArgs = @(
+            "is_debug=false"
+            'target_os="win"'
+            'target_cpu="x64"'
+            'v8_target_cpu="x64"'
+            "is_component_build=false"
+            "v8_monolithic=true"
+            "v8_use_external_startup_data=false"
+            "v8_enable_i18n_support=false"
+            "v8_enable_sandbox=false"
+            "treat_warnings_as_errors=false"
+            "symbol_level=0"
+          ) -join " "
 
           Write-Host "GN: $gn"
           Write-Host "Build dir: $buildDir"
-          Write-Host "Args written to: $argsPath"
-          Get-Content $argsPath | Write-Host
+          Write-Host "Args: $gnArgs"
 
-          & $gn gen $buildDir
+          & $gn gen $buildDir "--args=$gnArgs"
 
           if ($LASTEXITCODE -ne 0) {
             throw "gn gen failed with exit code $LASTEXITCODE"
           }
 
-      - name: Build v8_monolith and v8_libplatform
+      - name: Build v8_monolith
         shell: pwsh
         run: |
           $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
@@ -276,7 +266,7 @@ jobs:
             throw "ninja.exe not found: $ninja"
           }
 
-          & $ninja -C "out/x64.release" v8_monolith v8_libplatform
+          & $ninja -C "out/x64.release" v8_monolith
 
           if ($LASTEXITCODE -ne 0) {
             throw "ninja failed with exit code $LASTEXITCODE"
@@ -295,13 +285,13 @@ jobs:
 
           Copy-Item "$env:V8_DIR\include\*" $includeDir -Recurse -Force
 
-          # Find and copy v8_monolith.lib
           $libCandidates = @(
             "$env:V8_DIR\out\x64.release\obj\v8_monolith.lib",
             "$env:V8_DIR\out\x64.release\v8_monolith.lib"
           )
 
           $libSource = $null
+
           foreach ($candidate in $libCandidates) {
             if (Test-Path $candidate) {
               $libSource = $candidate
@@ -310,32 +300,15 @@ jobs:
           }
 
           if (-not $libSource) {
+            Write-Host "Searching for v8_monolith.lib..."
+            Get-ChildItem "$env:V8_DIR\out\x64.release" -Recurse -Filter "v8_monolith.lib" | ForEach-Object {
+              Write-Host $_.FullName
+            }
+
             throw "v8_monolith.lib not found."
           }
 
           Copy-Item $libSource (Join-Path $libDir "v8_monolith.lib") -Force
-
-          # Find and copy v8_libplatform.lib
-          $platformLibCandidates = @(
-            "$env:V8_DIR\out\x64.release\obj\v8_libplatform.lib",
-            "$env:V8_DIR\out\x64.release\v8_libplatform.lib",
-            "$env:V8_DIR\out\x64.release\obj\v8\v8_libplatform.lib"
-          )
-
-          $platformLibSource = $null
-          foreach ($candidate in $platformLibCandidates) {
-            if (Test-Path $candidate) {
-              $platformLibSource = $candidate
-              break
-            }
-          }
-
-          if ($platformLibSource) {
-            Copy-Item $platformLibSource (Join-Path $libDir "v8_libplatform.lib") -Force
-            Write-Host "Found and copied v8_libplatform.lib"
-          } else {
-            Write-Host "Warning: v8_libplatform.lib not found, it might be bundled within v8_monolith.lib"
-          }
 
           $propsPath = Join-Path $buildNativeDir "$env:PACKAGE_ID.props"
           $targetsPath = Join-Path $buildNativeDir "$env:PACKAGE_ID.targets"
@@ -359,7 +332,7 @@ jobs:
             <ItemDefinitionGroup Condition="'$(Platform)' == 'x64'">
               <Link>
                 <AdditionalLibraryDirectories>$(MSBuildThisFileDirectory)lib\win-x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-                <AdditionalDependencies>v8_monolith.lib;v8_libplatform.lib;winmm.lib;dbghelp.lib;shlwapi.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+                <AdditionalDependencies>v8_monolith.lib;winmm.lib;dbghelp.lib;shlwapi.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
               </Link>
             </ItemDefinitionGroup>
           </Project>
@@ -376,8 +349,8 @@ jobs:
               <authors>X</authors>
               <owners>X</owners>
               <requireLicenseAcceptance>false</requireLicenseAcceptance>
-              <description>V8 native Windows x64 static library and headers for ScriptKit. Built with MSVC STL ABI (use_custom_libcxx=false).</description>
-              <tags>v8 native javascript win-x64 static msvc</tags>
+              <description>V8 native Windows x64 static library and headers for X.Script.</description>
+              <tags>v8 native javascript win-x64</tags>
               <repository type="git" url="$env:V8_REPO" commit="$commit" />
             </metadata>
           </package>
@@ -390,6 +363,11 @@ jobs:
           Set-Content -Path $propsPath -Value $propsContent -Encoding UTF8
           Set-Content -Path $targetsPath -Value $targetsContent -Encoding UTF8
           Set-Content -Path $nuspecPath -Value $nuspecContent -Encoding UTF8
+
+          Write-Host "Package layout:"
+          Get-ChildItem $pkgRoot -Recurse | ForEach-Object {
+            Write-Host $_.FullName
+          }
 
       - name: Pack NuGet
         shell: pwsh
@@ -447,7 +425,6 @@ jobs:
             "build/native/$env:PACKAGE_ID.targets"
             "build/native/include/v8.h"
             "build/native/lib/win-x64/v8_monolith.lib"
-            "build/native/lib/win-x64/v8_libplatform.lib"
           )
 
           foreach ($item in $required) {
@@ -474,7 +451,7 @@ jobs:
       - name: Upload NuGet artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScriptKit.V8-${{ env.VERSION }}
+          name: X.Script.V8-${{ env.VERSION }}
           path: ${{ env.NUPKG }}
           if-no-files-found: error
 
