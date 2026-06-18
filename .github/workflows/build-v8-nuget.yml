@@ -40,7 +40,7 @@ jobs:
       V8_DIR: ${{ github.workspace }}\v8
       OUT_DIR: ${{ github.workspace }}\artifacts\v8-nuget
       WORK_DIR: ${{ github.workspace }}\artifacts\v8-nuget\work
-      GN_ARGS_CACHE_VERSION: v9
+      GN_ARGS_CACHE_VERSION: v12-msvc-stl-nopc-clean
       DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
       GYP_MSVS_VERSION: "2022"
 
@@ -199,15 +199,6 @@ jobs:
           $outPath = Join-Path $env:V8_DIR "build\util\LASTCHANGE.committime"
           [System.IO.File]::WriteAllText($outPath, $timestamp)
 
-      - name: Cache V8 build output
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.V8_DIR }}\out\x64.release
-          key: v8-build-win-x64-${{ env.V8_COMMIT }}-${{ env.GN_ARGS_CACHE_VERSION }}
-          restore-keys: |
-            v8-build-win-x64-${{ env.V8_COMMIT }}-
-            v8-build-win-x64-
-
       - name: Generate V8 build files
         shell: pwsh
         run: |
@@ -226,7 +217,7 @@ jobs:
             throw "VS2022_INSTALL_GN is empty"
           }
 
-          $buildDir = "out/x64.release"
+          $buildDir = "out/x64.release.msvc-stl-nopc"
 
           $gnArgs = @(
             "is_debug=false"
@@ -234,10 +225,17 @@ jobs:
             'target_cpu="x64"'
             'v8_target_cpu="x64"'
             "is_component_build=false"
+            "is_clang=true"
+            "use_custom_libcxx=false"
             "v8_monolithic=true"
             "v8_use_external_startup_data=false"
             "v8_enable_i18n_support=false"
             "v8_enable_sandbox=false"
+            "v8_enable_pointer_compression=false"
+            "v8_enable_pointer_compression_shared_cage=false"
+            "v8_enable_31bit_smis_on_64bit_arch=false"
+            "v8_enable_external_code_space=false"
+            "v8_generate_external_defines_header=true"
             "treat_warnings_as_errors=false"
             "symbol_level=0"
           ) -join " "
@@ -246,10 +244,41 @@ jobs:
           Write-Host "Build dir: $buildDir"
           Write-Host "Args: $gnArgs"
 
+          # Important: do not reuse/cross-restore an existing V8 out dir here.
+          # Torque-generated C++ contains layout constants. Reusing an out dir from
+          # different GN args can produce false static_assert failures such as
+          # JSInterceptorMap offset mismatches.
+          if (Test-Path $buildDir) {
+            Write-Host "Removing existing V8 build directory for a clean GN/Torque generation: $buildDir"
+            Remove-Item $buildDir -Recurse -Force
+          }
+
           & $gn gen $buildDir "--args=$gnArgs"
 
           if ($LASTEXITCODE -ne 0) {
             throw "gn gen failed with exit code $LASTEXITCODE"
+          }
+
+          Write-Host "Effective args.gn:"
+          Get-Content (Join-Path $buildDir "args.gn") | ForEach-Object { Write-Host $_ }
+
+          Write-Host "Selected GN arg values:"
+          $argNames = @(
+            "use_custom_libcxx",
+            "v8_enable_pointer_compression",
+            "v8_enable_pointer_compression_shared_cage",
+            "v8_enable_31bit_smis_on_64bit_arch",
+            "v8_enable_external_code_space",
+            "v8_enable_sandbox",
+            "v8_enable_map_packing",
+            "v8_generate_external_defines_header"
+          )
+          foreach ($name in $argNames) {
+            Write-Host "--- $name ---"
+            & $gn args $buildDir "--list=$name"
+            if ($LASTEXITCODE -ne 0) {
+              throw "gn args --list=$name failed with exit code $LASTEXITCODE"
+            }
           }
 
       - name: Build v8_monolith
@@ -266,7 +295,38 @@ jobs:
             throw "ninja.exe not found: $ninja"
           }
 
-          & $ninja -C "out/x64.release" v8_monolith
+          $buildDir = "out/x64.release.msvc-stl-nopc"
+
+          # Generate and inspect v8-gn.h before the heavy build, so a wrong/stale
+          # configuration fails loudly before Torque/C++ object layout asserts.
+          & $ninja -C $buildDir v8_config_headers
+          if ($LASTEXITCODE -ne 0) {
+            throw "ninja v8_config_headers failed with exit code $LASTEXITCODE"
+          }
+
+          $v8GnHeader = Join-Path $buildDir "gen\include\v8-gn.h"
+          if (-not (Test-Path $v8GnHeader)) {
+            throw "Generated v8-gn.h not found: $v8GnHeader"
+          }
+
+          $v8Gn = Get-Content $v8GnHeader -Raw
+          Write-Host "Generated v8-gn.h:"
+          Write-Host $v8Gn
+
+          $forbiddenDefines = @(
+            "V8_COMPRESS_POINTERS",
+            "V8_COMPRESS_POINTERS_IN_SHARED_CAGE",
+            "V8_31BIT_SMIS_ON_64BIT_ARCH",
+            "V8_ENABLE_SANDBOX",
+            "V8_EXTERNAL_CODE_SPACE"
+          )
+          foreach ($define in $forbiddenDefines) {
+            if ($v8Gn -match "(?m)^#define\s+$define(\s|$)") {
+              throw "Unexpected $define in generated v8-gn.h. GN args did not produce the intended no-pointer-compression/no-sandbox configuration."
+            }
+          }
+
+          & $ninja -C $buildDir v8_monolith
 
           if ($LASTEXITCODE -ne 0) {
             throw "ninja failed with exit code $LASTEXITCODE"
@@ -285,9 +345,19 @@ jobs:
 
           Copy-Item "$env:V8_DIR\include\*" $includeDir -Recurse -Force
 
+          $v8GnHeader = Join-Path $env:V8_DIR "out\x64.release.msvc-stl-nopc\gen\include\v8-gn.h"
+          if (-not (Test-Path $v8GnHeader)) {
+            Write-Host "Searching for generated v8-gn.h..."
+            Get-ChildItem "$env:V8_DIR\out\x64.release.msvc-stl-nopc\gen" -Recurse -Filter "v8-gn.h" | ForEach-Object {
+              Write-Host $_.FullName
+            }
+            throw "v8-gn.h not found. Keep v8_generate_external_defines_header=true and make sure v8_config_headers is generated."
+          }
+          Copy-Item $v8GnHeader (Join-Path $includeDir "v8-gn.h") -Force
+
           $libCandidates = @(
-            "$env:V8_DIR\out\x64.release\obj\v8_monolith.lib",
-            "$env:V8_DIR\out\x64.release\v8_monolith.lib"
+            "$env:V8_DIR\out\x64.release.msvc-stl-nopc\obj\v8_monolith.lib",
+            "$env:V8_DIR\out\x64.release.msvc-stl-nopc\v8_monolith.lib"
           )
 
           $libSource = $null
@@ -301,7 +371,7 @@ jobs:
 
           if (-not $libSource) {
             Write-Host "Searching for v8_monolith.lib..."
-            Get-ChildItem "$env:V8_DIR\out\x64.release" -Recurse -Filter "v8_monolith.lib" | ForEach-Object {
+            Get-ChildItem "$env:V8_DIR\out\x64.release.msvc-stl-nopc" -Recurse -Filter "v8_monolith.lib" | ForEach-Object {
               Write-Host $_.FullName
             }
 
@@ -321,6 +391,7 @@ jobs:
               <ClCompile>
                 <LanguageStandard>stdcpp20</LanguageStandard>
                 <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+                <PreprocessorDefinitions>V8_GN_HEADER;%(PreprocessorDefinitions)</PreprocessorDefinitions>
               </ClCompile>
             </ItemDefinitionGroup>
           </Project>
@@ -424,6 +495,7 @@ jobs:
             "build/native/$env:PACKAGE_ID.props"
             "build/native/$env:PACKAGE_ID.targets"
             "build/native/include/v8.h"
+            "build/native/include/v8-gn.h"
             "build/native/lib/win-x64/v8_monolith.lib"
           )
 
@@ -447,6 +519,55 @@ jobs:
               $zip.Dispose()
             }
           }
+
+
+      - name: Smoke test native link
+        shell: pwsh
+        run: |
+          $testDir = Join-Path $env:WORK_DIR "native-link-test"
+          if (Test-Path $testDir) {
+            Remove-Item $testDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $testDir | Out-Null
+
+          $pkgDir = Join-Path $testDir "pkg"
+          Expand-Archive -Path $env:NUPKG -DestinationPath $pkgDir -Force
+
+          $nativeDir = Join-Path $pkgDir "build\native"
+          $sourcePath = Join-Path $testDir "hello-v8.cc"
+          $exePath = Join-Path $testDir "hello-v8.exe"
+
+          @'
+          #include <libplatform/libplatform.h>
+          #include <v8.h>
+
+          int main() {
+            auto platform = v8::platform::NewDefaultPlatform();
+            v8::V8::InitializePlatform(platform.get());
+            v8::V8::Initialize();
+            v8::V8::Dispose();
+            v8::V8::DisposePlatform();
+            return 0;
+          }
+          '@ | Set-Content -Path $sourcePath -Encoding UTF8
+
+          $vsDevCmd = Join-Path $env:VS2022_INSTALL "Common7\Tools\VsDevCmd.bat"
+          if (-not (Test-Path $vsDevCmd)) {
+            throw "VsDevCmd.bat not found: $vsDevCmd"
+          }
+
+          $compileCmd = @"
+          call "$vsDevCmd" -arch=x64 -host_arch=x64
+          clang-cl /nologo /std:c++20 /EHsc /MD /DV8_GN_HEADER /I "$nativeDir\include" "$sourcePath" /link /LIBPATH:"$nativeDir\lib\win-x64" v8_monolith.lib winmm.lib dbghelp.lib shlwapi.lib advapi32.lib ws2_32.lib /OUT:"$exePath"
+          "@
+
+          cmd.exe /d /s /c $compileCmd
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Native link smoke test failed. The NuGet package is not consumable by a VS/MSBuild ClangCL C++ project."
+          }
+
+          Write-Host "Native link smoke test passed: $exePath"
 
       - name: Upload NuGet artifact
         uses: actions/upload-artifact@v4
