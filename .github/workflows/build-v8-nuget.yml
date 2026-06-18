@@ -40,7 +40,7 @@ jobs:
       V8_DIR: ${{ github.workspace }}\v8
       OUT_DIR: ${{ github.workspace }}\artifacts\v8-nuget
       WORK_DIR: ${{ github.workspace }}\artifacts\v8-nuget\work
-      GN_ARGS_CACHE_VERSION: v9
+      GN_ARGS_CACHE_VERSION: v11
       DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
       GYP_MSVS_VERSION: "2022"
 
@@ -171,23 +171,6 @@ jobs:
           git rev-parse HEAD
           git log -1 --oneline
 
-          echo Checking V8 tools:
-
-          if not exist "%V8_DIR%\buildtools\win\gn.exe" (
-            echo Missing %V8_DIR%\buildtools\win\gn.exe
-            dir /s /b "%V8_DIR%\buildtools"
-            exit /b 1
-          )
-
-          if not exist "%V8_DIR%\third_party\ninja\ninja.exe" (
-            echo Missing %V8_DIR%\third_party\ninja\ninja.exe
-            dir /s /b "%V8_DIR%\third_party\ninja"
-            exit /b 1
-          )
-
-          "%V8_DIR%\buildtools\win\gn.exe" --version
-          "%V8_DIR%\third_party\ninja\ninja.exe" --version
-
       - name: Resolve V8 commit
         shell: pwsh
         run: |
@@ -198,6 +181,44 @@ jobs:
           $timestamp = git -C "$env:V8_DIR" log -1 --format="%ct"
           $outPath = Join-Path $env:V8_DIR "build\util\LASTCHANGE.committime"
           [System.IO.File]::WriteAllText($outPath, $timestamp)
+
+      - name: Apply MSVC Patch
+        shell: pwsh
+        run: |
+          Set-Location $env:V8_DIR
+          $patch = @"
+          diff --git a/BUILD.gn b/BUILD.gn
+          index f2f72a02c61..00a96aa8054 100644
+          --- a/BUILD.gn
+          +++ b/BUILD.gn
+          @@ -1710,15 +1710,15 @@ config("toolchain") {
+             }
+           }
+           
+          -cflags += [
+          -  # Disable warnings about offsetof being used on non-standard-layout types.
+          -  # offsetof is only specified for standard-layout types, but its behaviour
+          -  # on non-standard-layout types is implementation defined (rather than UB),
+          -  # and our supported compilers have the expected reasonable behaviour.
+          -  "-Wno-invalid-offsetof",
+          -]
+          -
+           if (!is_clang) {
+          +  cflags += [
+          +    # Disable warnings about offsetof being used on non-standard-layout types.
+          +    # offsetof is only specified for standard-layout types, but its behaviour
+          +    # on non-standard-layout types is implementation defined (rather than UB),
+          +    # and our supported compilers have the expected reasonable behaviour.
+          +    "-Wno-invalid-offsetof",
+          +  ]
+          +
+             cflags += [
+               # Disable gcc warnings for optimizations based on the assumption that
+               # signed overflow does not occur. Generates false positives (see
+          "@
+          $patchPath = Join-Path $env:GITHUB_WORKSPACE "msvc.patch"
+          Set-Content -Path $patchPath -Value $patch
+          git apply $patchPath
 
       - name: Cache V8 build output
         uses: actions/cache@v4
@@ -238,7 +259,7 @@ jobs:
             "use_custom_libcxx=false"
             "v8_monolithic=true"
             "v8_use_external_startup_data=false"
-            "v8_enable_i18n_support=true"
+            "v8_enable_i18n_support=false"
             "v8_enable_pointer_compression=false"
             "v8_enable_sandbox=false"
             "clang_use_chrome_plugins=false"
@@ -251,7 +272,6 @@ jobs:
             "v8_enable_temporal_support=false"
             "v8_enable_test_features=false"
             "v8_enable_snapshot_compression=false"
-            "v8_allocation_foldstack=false"
             "enable_rust=false"
             "chrome_pgo_phase=false"
             "dcheck_always_on=false"
@@ -400,11 +420,6 @@ jobs:
           Set-Content -Path $propsPath -Value $propsContent -Encoding UTF8
           Set-Content -Path $targetsPath -Value $targetsContent -Encoding UTF8
           Set-Content -Path $nuspecPath -Value $nuspecContent -Encoding UTF8
-
-          Write-Host "Package layout:"
-          Get-ChildItem $pkgRoot -Recurse | ForEach-Object {
-            Write-Host $_.FullName
-          }
 
       - name: Pack NuGet
         shell: pwsh
