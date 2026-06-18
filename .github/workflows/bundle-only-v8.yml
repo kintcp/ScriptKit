@@ -71,7 +71,7 @@ jobs:
       - name: Publish to Maven Repo (Local)
         run: |
           chmod +x scripts/publish-maven.sh
-          ./scripts/publish-maven.sh X.Script.V8 "${{ github.event.inputs.version }}" artifacts/v8-android/X.Script.V8.aar
+          ./scripts/publish-maven.sh ScriptKit.V8 "${{ github.event.inputs.version }}" artifacts/v8-android/ScriptKit.V8.aar
 
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4
@@ -125,5 +125,5 @@ jobs:
       - name: Upload XCFramework Zip
         uses: actions/upload-artifact@v4
         with:
-          name: X.Script.V8-XCFramework-Manual
-          path: artifacts/v8-spm/X.Script.V8.xcframework.zip
+          name: ScriptKit.V8-XCFramework-Manual
+          path: artifacts/v8-spm/ScriptKit.V8.xcframework.zip

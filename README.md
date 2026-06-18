@@ -1,4 +1,4 @@
-# X.Script
+# ScriptKit
 
 ## Android (Gradle)
 
@@ -6,13 +6,13 @@ To use the Android AAR, add the following to your `build.gradle`:
 
 ```gradle
 repositories {
-    maven { url 'https://kintcp.github.io/X.Script/' }
+    maven { url 'https://kintcp.github.io/ScriptKit/' }
 }
 
 dependencies {
-    implementation 'org.xscript:X.Script.QuickJS:1.0.5'
+    implementation 'org.xscript:ScriptKit.QuickJS:1.0.5'
     // or for V8
-    implementation 'org.xscript:X.Script.V8:1.0.5'
+    implementation 'org.xscript:ScriptKit.V8:1.0.5'
 }
 ```
 
@@ -24,6 +24,6 @@ Add the following to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/kintcp/X.Script.git", from: "1.0.5")
+    .package(url: "https://github.com/kintcp/ScriptKit.git", from: "1.0.5")
 ]
 ```

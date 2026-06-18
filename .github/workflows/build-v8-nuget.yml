@@ -1,4 +1,4 @@
-name: Build X.Script.V8 NuGet
+name: Build ScriptKit.V8 NuGet
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
     runs-on: windows-latest
 
     env:
-      PACKAGE_ID: X.Script.V8
+      PACKAGE_ID: ScriptKit.V8
       V8_REPO: https://chromium.googlesource.com/v8/v8.git
       DEPOT_TOOLS_DIR: ${{ github.workspace }}\depot_tools
       V8_DIR: ${{ github.workspace }}\v8
@@ -349,7 +349,7 @@ jobs:
               <authors>X</authors>
               <owners>X</owners>
               <requireLicenseAcceptance>false</requireLicenseAcceptance>
-              <description>V8 native Windows x64 static library and headers for X.Script.</description>
+              <description>V8 native Windows x64 static library and headers for ScriptKit.</description>
               <tags>v8 native javascript win-x64</tags>
               <repository type="git" url="$env:V8_REPO" commit="$commit" />
             </metadata>
@@ -451,7 +451,7 @@ jobs:
       - name: Upload NuGet artifact
         uses: actions/upload-artifact@v4
         with:
-          name: X.Script.V8-${{ env.VERSION }}
+          name: ScriptKit.V8-${{ env.VERSION }}
           path: ${{ env.NUPKG }}
           if-no-files-found: error
 

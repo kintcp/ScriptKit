@@ -1,4 +1,4 @@
-name: Build X.Script.V8 Android AAR
+name: Build ScriptKit.V8 Android AAR
 
 on:
   workflow_dispatch:
@@ -145,15 +145,15 @@ jobs:
       - name: Upload AAR
         uses: actions/upload-artifact@v4
         with:
-          name: X.Script.V8-AAR
-          path: artifacts/v8-android/X.Script.V8.aar
+          name: ScriptKit.V8-AAR
+          path: artifacts/v8-android/ScriptKit.V8.aar
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/aar-v')
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/v8-android/X.Script.V8.aar
+            artifacts/v8-android/ScriptKit.V8.aar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -163,7 +163,7 @@ jobs:
           TAG_NAME=${GITHUB_REF#refs/tags/}
           VERSION=${TAG_NAME#aar-v}
           chmod +x scripts/publish-maven.sh
-          ./scripts/publish-maven.sh X.Script.V8 "$VERSION" artifacts/v8-android/X.Script.V8.aar
+          ./scripts/publish-maven.sh ScriptKit.V8 "$VERSION" artifacts/v8-android/ScriptKit.V8.aar
 
       - name: Deploy to GitHub Pages
         if: startsWith(github.ref, 'refs/tags/aar-v')

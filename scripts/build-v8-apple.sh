@@ -201,7 +201,7 @@ if [ "$PLATFORM" = "bundle" ]; then
     fi
 
     # Create XCFramework
-    rm -rf "$OUTPUT_DIR/X.Script.V8.xcframework"
+    rm -rf "$OUTPUT_DIR/ScriptKit.V8.xcframework"
     
     # Patch v8config.h to unconditionally include v8-gn.h
     find "$OUTPUT_DIR/include" -name "v8config.h" -exec sed -i '' 's/#ifdef V8_GN_HEADER/#if 1 \/\/ V8_GN_HEADER patched/g' {} +
@@ -215,16 +215,16 @@ if [ "$PLATFORM" = "bundle" ]; then
         fi
     done
     
-    xcode_cmd="$xcode_cmd -output $OUTPUT_DIR/X.Script.V8.xcframework"
+    xcode_cmd="$xcode_cmd -output $OUTPUT_DIR/ScriptKit.V8.xcframework"
     
     echo "Running: $xcode_cmd"
     $xcode_cmd
 
-    echo "XCFramework created at $OUTPUT_DIR/X.Script.V8.xcframework"
+    echo "XCFramework created at $OUTPUT_DIR/ScriptKit.V8.xcframework"
 
     cd "$OUTPUT_DIR"
-    zip -q -r X.Script.V8.xcframework.zip X.Script.V8.xcframework
-    echo "Zipped XCFramework to $OUTPUT_DIR/X.Script.V8.xcframework.zip"
+    zip -q -r ScriptKit.V8.xcframework.zip ScriptKit.V8.xcframework
+    echo "Zipped XCFramework to $OUTPUT_DIR/ScriptKit.V8.xcframework.zip"
     exit 0
 fi
 

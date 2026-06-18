@@ -1,4 +1,4 @@
-name: Build X.Script.QuickJS NuGet
+name: Build ScriptKit.QuickJS NuGet
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      PACKAGE_ID: X.Script.QuickJS
+      PACKAGE_ID: ScriptKit.QuickJS
       RID: win-x64
       QUICKJS_REPO: https://github.com/bellard/quickjs.git
 
@@ -380,7 +380,7 @@ jobs:
       - name: Upload NuGet artifact
         uses: actions/upload-artifact@v4
         with:
-          name: X.Script.QuickJS-${{ env.VERSION }}
+          name: ScriptKit.QuickJS-${{ env.VERSION }}
           path: ${{ env.NUPKG }}
           if-no-files-found: error
 

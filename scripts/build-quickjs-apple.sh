@@ -193,7 +193,7 @@ if [ "$PLATFORM" = "bundle" ]; then
     fi
 
     # Create XCFramework
-    rm -rf "$OUTPUT_DIR/X.Script.QuickJS.xcframework"
+    rm -rf "$OUTPUT_DIR/QuickJS.xcframework"
     xcodebuild -create-xcframework \
         -library "$OUTPUT_DIR/libs-final/macos/libquickjs.a" \
         -headers "$OUTPUT_DIR/include" \
@@ -209,12 +209,12 @@ if [ "$PLATFORM" = "bundle" ]; then
         -headers "$OUTPUT_DIR/include" \
         -library "$OUTPUT_DIR/libs-final/visionos-simulator/libquickjs.a" \
         -headers "$OUTPUT_DIR/include" \
-        -output "$OUTPUT_DIR/X.Script.QuickJS.xcframework"
+        -output "$OUTPUT_DIR/QuickJS.xcframework"
 
-    echo "XCFramework created at $OUTPUT_DIR/X.Script.QuickJS.xcframework"
+    echo "XCFramework created at $OUTPUT_DIR/QuickJS.xcframework"
 
     cd "$OUTPUT_DIR"
-    zip -q -r X.Script.QuickJS.xcframework.zip X.Script.QuickJS.xcframework
+    zip -q -r QuickJS.xcframework.zip QuickJS.xcframework
     exit 0
 fi
 
