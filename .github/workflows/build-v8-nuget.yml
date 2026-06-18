@@ -40,7 +40,7 @@ jobs:
       V8_DIR: ${{ github.workspace }}\v8
       OUT_DIR: ${{ github.workspace }}\artifacts\v8-nuget
       WORK_DIR: ${{ github.workspace }}\artifacts\v8-nuget\work
-      GN_ARGS_CACHE_VERSION: v11
+      GN_ARGS_CACHE_VERSION: v14
       DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
       GYP_MSVS_VERSION: "2022"
 
@@ -182,44 +182,6 @@ jobs:
           $outPath = Join-Path $env:V8_DIR "build\util\LASTCHANGE.committime"
           [System.IO.File]::WriteAllText($outPath, $timestamp)
 
-      - name: Apply MSVC Patch
-        shell: pwsh
-        run: |
-          Set-Location $env:V8_DIR
-          $patch = @"
-          diff --git a/BUILD.gn b/BUILD.gn
-          index f2f72a02c61..00a96aa8054 100644
-          --- a/BUILD.gn
-          +++ b/BUILD.gn
-          @@ -1710,15 +1710,15 @@ config("toolchain") {
-             }
-           }
-           
-          -cflags += [
-          -  # Disable warnings about offsetof being used on non-standard-layout types.
-          -  # offsetof is only specified for standard-layout types, but its behaviour
-          -  # on non-standard-layout types is implementation defined (rather than UB),
-          -  # and our supported compilers have the expected reasonable behaviour.
-          -  "-Wno-invalid-offsetof",
-          -]
-          -
-           if (!is_clang) {
-          +  cflags += [
-          +    # Disable warnings about offsetof being used on non-standard-layout types.
-          +    # offsetof is only specified for standard-layout types, but its behaviour
-          +    # on non-standard-layout types is implementation defined (rather than UB),
-          +    # and our supported compilers have the expected reasonable behaviour.
-          +    "-Wno-invalid-offsetof",
-          +  ]
-          +
-             cflags += [
-               # Disable gcc warnings for optimizations based on the assumption that
-               # signed overflow does not occur. Generates false positives (see
-          "@
-          $patchPath = Join-Path $env:GITHUB_WORKSPACE "msvc.patch"
-          Set-Content -Path $patchPath -Value $patch
-          git apply $patchPath
-
       - name: Cache V8 build output
         uses: actions/cache@v4
         with:
@@ -248,45 +210,53 @@ jobs:
           }
 
           $buildDir = "out/x64.release"
+          
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 
-          $gnArgs = @(
-            'target_os="win"'
-            'target_cpu="x64"'
-            'v8_target_cpu="x64"'
-            "is_debug=false"
-            "is_component_build=false"
-            "is_clang=true"
-            "use_custom_libcxx=false"
-            "v8_monolithic=true"
-            "v8_use_external_startup_data=false"
-            "v8_enable_i18n_support=false"
-            "v8_enable_pointer_compression=false"
-            "v8_enable_sandbox=false"
-            "clang_use_chrome_plugins=false"
-            "treat_warnings_as_errors=false"
-            "symbol_level=0"
-            "use_rtti=false"
-            "use_sysroot=false"
-            "v8_enable_webassembly=true"
-            "v8_enable_builtins_optimization=true"
-            "v8_enable_temporal_support=false"
-            "v8_enable_test_features=false"
-            "v8_enable_snapshot_compression=false"
-            "enable_rust=false"
-            "chrome_pgo_phase=false"
-            "dcheck_always_on=false"
-            "is_cfi=false"
-            "is_asan=false"
-            "strip_debug_info=true"
-            "v8_deprecation_warnings=false"
-            "v8_imminent_deprecation_warnings=false"
-          ) -join " "
+          # Exactly matching haroel/v8-build args.win.x64.release.gn
+          $gnArgsContent = @"
+          target_os="win"
+          target_cpu="x64"
+          v8_target_cpu="x64"
+          clang_use_chrome_plugins=false
+          chrome_pgo_phase=false
+          dcheck_always_on=false
+          enable_rust=false
+          is_cfi=false
+          is_asan=false
+          is_clang=true
+          is_component_build=false
+          is_debug=false
+          strip_debug_info=true
+          symbol_level=0
+          treat_warnings_as_errors=false
+          use_custom_libcxx=false
+          use_rtti=false
+          use_sysroot=false
+          v8_deprecation_warnings=false
+          v8_enable_builtins_optimization=true
+          v8_enable_gdbjit=false
+          v8_enable_i18n_support=false
+          v8_enable_pointer_compression=false
+          v8_enable_sandbox=false
+          v8_enable_snapshot_compression=false
+          v8_enable_temporal_support=false
+          v8_enable_test_features=false
+          v8_enable_webassembly=true
+          v8_imminent_deprecation_warnings=false
+          v8_monolithic=true
+          v8_use_external_startup_data=false
+          "@
+
+          $argsPath = Join-Path $env:V8_DIR "$buildDir\args.gn"
+          Set-Content -Path $argsPath -Value $gnArgsContent -Encoding UTF8
 
           Write-Host "GN: $gn"
           Write-Host "Build dir: $buildDir"
-          Write-Host "Args: $gnArgs"
+          Write-Host "Args written to: $argsPath"
+          Get-Content $argsPath | Write-Host
 
-          & $gn gen $buildDir "--args=$gnArgs"
+          & $gn gen $buildDir
 
           if ($LASTEXITCODE -ne 0) {
             throw "gn gen failed with exit code $LASTEXITCODE"
