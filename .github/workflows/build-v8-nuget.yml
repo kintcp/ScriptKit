@@ -238,10 +238,10 @@ jobs:
             "v8_static_library=true"
             "v8_use_external_startup_data=false"
             "v8_enable_i18n_support=false"
-            "v8_enable_sandbox=false"
             "treat_warnings_as_errors=false"
             "symbol_level=0"
             "use_custom_libcxx=false"
+            "is_clang=true"
           ) -join " "
 
           Write-Host "GN: $gn"
