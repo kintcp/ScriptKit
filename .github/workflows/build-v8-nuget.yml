@@ -554,7 +554,7 @@ jobs:
 
           $devcmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
 
-          $cmd = 'call "' + $devcmd + '" -arch=arm64 -host_arch=x64 && clang-cl /nologo /std:c++20 /EHsc /MT /O2 /DNDEBUG /I "' + $native + '\include" "' + $main + '" /link /LIBPATH:"' + $native + '\lib\win-arm64" v8_monolith.lib winmm.lib dbghelp.lib shlwapi.lib advapi32.lib ws2_32.lib /OUT:"' + $exe + '"'
+          $cmd = 'call "' + $devcmd + '" -arch=arm64 -host_arch=x64 && clang-cl --target=aarch64-pc-windows-msvc /nologo /std:c++20 /EHsc /MT /O2 /DNDEBUG /I "' + $native + '\include" "' + $main + '" /link /MACHINE:ARM64 /LIBPATH:"' + $native + '\lib\win-arm64" v8_monolith.lib winmm.lib dbghelp.lib shlwapi.lib advapi32.lib ws2_32.lib /OUT:"' + $exe + '"'
 
           cmd.exe /c $cmd
 
