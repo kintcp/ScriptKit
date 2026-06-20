@@ -104,7 +104,7 @@ jobs:
           rm -rf "$LLVM_MINGW_DIR"
           mkdir -p "$WORK_DIR" "$LLVM_MINGW_DIR"
 
-          DISTRO="ubuntu-24.04-$(uname -m)"
+          DISTRO="ubuntu-22.04-$(uname -m)"
           ARCHIVE="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-${DISTRO}.tar.xz"
           URL="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/${ARCHIVE}"
 
