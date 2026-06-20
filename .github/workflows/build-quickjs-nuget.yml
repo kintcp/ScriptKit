@@ -411,8 +411,6 @@ jobs:
 
           cd "$NUPKG_ROOT"
 
-          nuget push "$NUPKG" -ApiKey ${{ secrets.NUGET_API_KEY }} -source nuget.org
-
           zip -r "$NUPKG" \
             "$PACKAGE_ID.nuspec" \
             build
@@ -456,6 +454,6 @@ jobs:
         shell: bash
         run: |
           dotnet nuget push "$NUPKG" \
-            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
-            --api-key "${{ secrets.GITHUB_TOKEN }}" \
+            --source "nuget.org" \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
             --skip-duplicate
