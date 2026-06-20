@@ -594,6 +594,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
 
           function Get-PeMachineHex {
               param(
@@ -648,40 +649,44 @@ jobs:
           using System;
           using System.Runtime.InteropServices;
 
-          internal static class Native
+          internal static class Program
           {
               [DllImport("X.Script.QuickJS", CallingConvention = CallingConvention.Cdecl)]
-              internal static extern IntPtr JS_NewRuntime();
+              private static extern IntPtr JS_NewRuntime();
 
               [DllImport("X.Script.QuickJS", CallingConvention = CallingConvention.Cdecl)]
-              internal static extern void JS_FreeRuntime(IntPtr rt);
+              private static extern void JS_FreeRuntime(IntPtr rt);
 
               [DllImport("X.Script.QuickJS", CallingConvention = CallingConvention.Cdecl)]
-              internal static extern IntPtr JS_NewContext(IntPtr rt);
+              private static extern IntPtr JS_NewContext(IntPtr rt);
 
               [DllImport("X.Script.QuickJS", CallingConvention = CallingConvention.Cdecl)]
-              internal static extern void JS_FreeContext(IntPtr ctx);
+              private static extern void JS_FreeContext(IntPtr ctx);
+
+              private static int Main()
+              {
+                  IntPtr rt = JS_NewRuntime();
+                  if (rt == IntPtr.Zero)
+                  {
+                      Console.Error.WriteLine("JS_NewRuntime returned null.");
+                      return 10;
+                  }
+
+                  IntPtr ctx = JS_NewContext(rt);
+                  if (ctx == IntPtr.Zero)
+                  {
+                      JS_FreeRuntime(rt);
+                      Console.Error.WriteLine("JS_NewContext returned null.");
+                      return 11;
+                  }
+
+                  JS_FreeContext(ctx);
+                  JS_FreeRuntime(rt);
+
+                  Console.WriteLine("QuickJS native PInvoke smoke test passed.");
+                  return 0;
+              }
           }
-
-          IntPtr rt = Native.JS_NewRuntime();
-          if (rt == IntPtr.Zero)
-          {
-              Console.Error.WriteLine("JS_NewRuntime returned null.");
-              Environment.Exit(10);
-          }
-
-          IntPtr ctx = Native.JS_NewContext(rt);
-          if (ctx == IntPtr.Zero)
-          {
-              Native.JS_FreeRuntime(rt);
-              Console.Error.WriteLine("JS_NewContext returned null.");
-              Environment.Exit(11);
-          }
-
-          Native.JS_FreeContext(ctx);
-          Native.JS_FreeRuntime(rt);
-
-          Console.WriteLine("QuickJS native PInvoke smoke test passed.");
           '@ | Set-Content -Path Program.cs -Encoding UTF8
 
           dotnet restore
