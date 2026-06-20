@@ -121,7 +121,6 @@ jobs:
 
           "$LLVM_MINGW_DIR/bin/x86_64-w64-mingw32-clang" --version
           "$LLVM_MINGW_DIR/bin/aarch64-w64-mingw32-clang" --version
-          "$LLVM_MINGW_DIR/bin/llvm-dlltool" --version
           "$LLVM_MINGW_DIR/bin/llvm-readobj" --version
 
       - name: Clone official QuickJS
