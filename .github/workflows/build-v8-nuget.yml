@@ -40,31 +40,18 @@ jobs:
             target_cpu: x64
             rid: win-x64
             build_dir: out.gn/win.x64.release
-            vc_arch: x64
-            machine: X64
-            pe_machine: "0x8664"
-            clang_target: ""
           - arch: arm64
             target_cpu: arm64
             rid: win-arm64
             build_dir: out.gn/win.arm64.release
-            vc_arch: arm64
-            machine: ARM64
-            pe_machine: "0xAA64"
-            clang_target: "--target=aarch64-pc-windows-msvc"
 
     env:
-      PACKAGE_ID: X.Script.V8
       DEPOT_TOOLS_REPO: https://chromium.googlesource.com/chromium/tools/depot_tools.git
       DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
       GYP_MSVS_VERSION: "2022"
       TARGET_CPU: ${{ matrix.target_cpu }}
       BUILD_DIR: ${{ matrix.build_dir }}
       RID: ${{ matrix.rid }}
-      VC_ARCH: ${{ matrix.vc_arch }}
-      MACHINE: ${{ matrix.machine }}
-      PE_MACHINE: ${{ matrix.pe_machine }}
-      CLANG_TARGET: ${{ matrix.clang_target }}
 
     steps:
       - name: Checkout repository
@@ -218,7 +205,6 @@ jobs:
             'v8_generate_external_defines_header=true',
             'v8_imminent_deprecation_warnings=false',
             'v8_monolithic=true',
-            'v8_monolithic_for_shared_library=true',
             'v8_use_external_startup_data=false'
           )
 
@@ -255,222 +241,6 @@ jobs:
             exit /b 1
           )
 
-      - name: Build V8 DLL from monolith
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-
-          function Get-PeMachineHex {
-              param([Parameter(Mandatory = $true)][string] $Path)
-
-              $bytes = [System.IO.File]::ReadAllBytes($Path)
-              $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-              $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-
-              return "0x{0:X4}" -f $machine
-          }
-
-          function Assert-PeMachine {
-              param(
-                  [Parameter(Mandatory = $true)][string] $Path,
-                  [Parameter(Mandatory = $true)][string] $Expected
-              )
-
-              if (!(Test-Path $Path)) {
-                  throw "Missing PE file: $Path"
-              }
-
-              $actual = Get-PeMachineHex -Path $Path
-              Write-Host "$Path -> $actual"
-
-              if ($actual -ne $Expected) {
-                  throw "PE machine mismatch. Expected $Expected, got $actual. File: $Path"
-              }
-          }
-
-          $v8Dir = Join-Path $env:GITHUB_WORKSPACE "v8"
-          $v8BuildDir = Join-Path $v8Dir $env:BUILD_DIR
-          $monolith = Join-Path $v8BuildDir "obj\v8_monolith.lib"
-
-          if (!(Test-Path $monolith)) {
-            throw "Missing v8_monolith.lib: $monolith"
-          }
-
-          $dllRoot = Join-Path $env:GITHUB_WORKSPACE "v8-dll\$env:RID"
-          $dllBuildDir = Join-Path $dllRoot "build"
-          $dllOutDir = Join-Path $dllRoot "bin"
-          $libOutDir = Join-Path $dllRoot "lib"
-
-          if (Test-Path $dllRoot) {
-            Remove-Item $dllRoot -Recurse -Force
-          }
-
-          New-Item -ItemType Directory -Force -Path $dllBuildDir | Out-Null
-          New-Item -ItemType Directory -Force -Path $dllOutDir | Out-Null
-          New-Item -ItemType Directory -Force -Path $libOutDir | Out-Null
-
-          $dllName = "$env:PACKAGE_ID.dll"
-          $libName = "$env:PACKAGE_ID.lib"
-          $defName = "$env:PACKAGE_ID.def"
-          $expName = "$env:PACKAGE_ID.exp"
-
-          $dllPath = Join-Path $dllOutDir $dllName
-          $implibPath = Join-Path $libOutDir $libName
-          $defPath = Join-Path $dllBuildDir $defName
-          $dllMain = Join-Path $dllBuildDir "dllmain.cc"
-
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-
-          if (-not $vsPath) {
-            throw "Visual Studio with VC tools not found"
-          }
-
-          $devcmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
-
-          @'
-          #define WIN32_LEAN_AND_MEAN
-          #include <windows.h>
-
-          BOOL WINAPI DllMain(HINSTANCE, DWORD, LPVOID) {
-              return TRUE;
-          }
-          '@ | Set-Content -Path $dllMain -Encoding UTF8
-
-          $dumpCmd = Join-Path $dllBuildDir "dump-symbols.cmd"
-
-          @"
-          @echo off
-          call "$devcmd" -arch=$env:VC_ARCH -host_arch=x64 >nul
-          dumpbin /nologo /linkermember:1 "$monolith"
-          dumpbin /nologo /linkermember:2 "$monolith"
-          "@ | Set-Content -Path $dumpCmd -Encoding ASCII
-
-          Write-Host "Collecting symbols from v8_monolith.lib..."
-          $dumpOutput = & cmd.exe /c "`"$dumpCmd`""
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "dumpbin failed with exit code $LASTEXITCODE"
-          }
-
-          $dumpLog = Join-Path $dllBuildDir "dump-symbols.txt"
-          $dumpOutput | Set-Content -Path $dumpLog -Encoding UTF8
-
-          $symbols = [System.Collections.Generic.SortedSet[string]]::new([System.StringComparer]::Ordinal)
-
-          foreach ($line in $dumpOutput) {
-            $matches = [regex]::Matches($line, '(\?\S+@(?:v8|cppgc)@@\S*)')
-
-            foreach ($match in $matches) {
-              $symbol = $match.Groups[1].Value.Trim()
-              $symbol = $symbol.TrimEnd(',')
-              $symbol = $symbol.TrimEnd(';')
-
-              if ($symbol.Length -eq 0) {
-                continue
-              }
-
-              if ($symbol.StartsWith("__imp_")) {
-                continue
-              }
-
-              $null = $symbols.Add($symbol)
-            }
-          }
-
-          if ($symbols.Count -lt 100) {
-            Write-Host "Export symbol count: $($symbols.Count)"
-            Write-Host "Dump log: $dumpLog"
-            throw "Too few V8 export symbols collected. The .def generation is probably wrong."
-          }
-
-          $defLines = New-Object System.Collections.Generic.List[string]
-          $defLines.Add("LIBRARY $dllName")
-          $defLines.Add("EXPORTS")
-
-          foreach ($symbol in $symbols) {
-            $defLines.Add("  $symbol")
-          }
-
-          Set-Content -Path $defPath -Value $defLines -Encoding ASCII
-
-          Write-Host "Generated exports:"
-          Write-Host "  DEF: $defPath"
-          Write-Host "  Count: $($symbols.Count)"
-
-          $linkCmd = Join-Path $dllBuildDir "link-dll.cmd"
-
-          $targetPrefix = ""
-          if ($env:CLANG_TARGET -and $env:CLANG_TARGET.Trim().Length -gt 0) {
-            $targetPrefix = "$env:CLANG_TARGET "
-          }
-
-          @"
-          @echo off
-          call "$devcmd" -arch=$env:VC_ARCH -host_arch=x64
-          if errorlevel 1 exit /b 1
-
-          clang-cl $targetPrefix/nologo /LD /std:c++20 /EHsc /MT /O2 /DNDEBUG "$dllMain" /link /NOLOGO /DLL /MACHINE:$env:MACHINE /WHOLEARCHIVE:"$monolith" /DEF:"$defPath" /OUT:"$dllPath" /IMPLIB:"$implibPath" winmm.lib dbghelp.lib shlwapi.lib advapi32.lib ws2_32.lib
-          if errorlevel 1 exit /b 1
-          "@ | Set-Content -Path $linkCmd -Encoding ASCII
-
-          Write-Host "Linking $dllName..."
-          & cmd.exe /c "`"$linkCmd`""
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Linking $dllName failed with exit code $LASTEXITCODE"
-          }
-
-          if (!(Test-Path $dllPath)) {
-            throw "DLL not created: $dllPath"
-          }
-
-          if (!(Test-Path $implibPath)) {
-            throw "Import lib not created: $implibPath"
-          }
-
-          Assert-PeMachine -Path $dllPath -Expected $env:PE_MACHINE
-
-          $dumpDependentsCmd = Join-Path $dllBuildDir "dump-dependents.cmd"
-
-          @"
-          @echo off
-          call "$devcmd" -arch=$env:VC_ARCH -host_arch=x64 >nul
-          dumpbin /nologo /dependents "$dllPath"
-          "@ | Set-Content -Path $dumpDependentsCmd -Encoding ASCII
-
-          $dependents = & cmd.exe /c "`"$dumpDependentsCmd`""
-          $dependentsLog = Join-Path $dllBuildDir "dependents.txt"
-          $dependents | Set-Content -Path $dependentsLog -Encoding UTF8
-
-          Write-Host "DLL dependents:"
-          $dependents | ForEach-Object { Write-Host $_ }
-
-          $badDependentPatterns = @(
-            "v8_.*\.dll",
-            "icu.*\.dll",
-            "msvcp.*\.dll",
-            "vcruntime.*\.dll",
-            "ucrtbase\.dll"
-          )
-
-          foreach ($pattern in $badDependentPatterns) {
-            if ($dependents -match $pattern) {
-              throw "Unexpected dynamic dependency matching '$pattern'. See $dependentsLog"
-            }
-          }
-
-          $expPath = Join-Path $libOutDir $expName
-          if (Test-Path $expPath) {
-            Remove-Item $expPath -Force
-          }
-
-          Write-Host "Built DLL files:"
-          Get-ChildItem $dllRoot -Recurse | ForEach-Object {
-            Write-Host $_.FullName
-          }
-
       - name: Prepare architecture artifact
         shell: pwsh
         run: |
@@ -478,20 +248,16 @@ jobs:
 
           $artifactRoot = Join-Path $env:GITHUB_WORKSPACE "v8-artifact"
           $includeDir = Join-Path $artifactRoot "include"
-          $binDir = Join-Path $artifactRoot "bin\$env:RID"
           $libDir = Join-Path $artifactRoot "lib\$env:RID"
           $buildInfoDir = Join-Path $artifactRoot "build-info\$env:RID"
-
           $v8Dir = Join-Path $env:GITHUB_WORKSPACE "v8"
           $v8BuildDir = Join-Path $v8Dir $env:BUILD_DIR
-          $dllRoot = Join-Path $env:GITHUB_WORKSPACE "v8-dll\$env:RID"
 
           if (Test-Path $artifactRoot) {
             Remove-Item $artifactRoot -Recurse -Force
           }
 
           New-Item -ItemType Directory -Force -Path $includeDir | Out-Null
-          New-Item -ItemType Directory -Force -Path $binDir | Out-Null
           New-Item -ItemType Directory -Force -Path $libDir | Out-Null
           New-Item -ItemType Directory -Force -Path $buildInfoDir | Out-Null
 
@@ -504,14 +270,9 @@ jobs:
             throw "Generated v8-gn.h not found: $generatedGnHeader"
           }
 
-          Copy-Item "$dllRoot\bin\$env:PACKAGE_ID.dll" "$binDir\$env:PACKAGE_ID.dll" -Force
-          Copy-Item "$dllRoot\lib\$env:PACKAGE_ID.lib" "$libDir\$env:PACKAGE_ID.lib" -Force
-
+          Copy-Item "$v8BuildDir\obj\v8_monolith.lib" "$libDir\v8_monolith.lib" -Force
           Copy-Item "$v8BuildDir\args.gn" "$buildInfoDir\args.gn" -Force
           Copy-Item "$v8BuildDir\args.full.txt" "$buildInfoDir\args.full.txt" -Force
-          Copy-Item "$dllRoot\build\$env:PACKAGE_ID.def" "$buildInfoDir\$env:PACKAGE_ID.def" -Force
-          Copy-Item "$dllRoot\build\dependents.txt" "$buildInfoDir\dependents.txt" -Force
-          Copy-Item "$dllRoot\build\dump-symbols.txt" "$buildInfoDir\dump-symbols.txt" -Force
 
           Write-Host "Prepared artifact layout:"
           Get-ChildItem $artifactRoot -Recurse | ForEach-Object {
@@ -535,10 +296,14 @@ jobs:
 
     env:
       PACKAGE_ID: X.Script.V8
+      NUGET_PACKAGES: ${{ github.workspace }}\.nuget-packages
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
 
       - name: Resolve package version
         id: resolve
@@ -557,7 +322,6 @@ jobs:
 
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "V8_REF=$v8Ref" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
           Write-Host "VERSION=$version"
@@ -575,18 +339,9 @@ jobs:
 
           $root = Join-Path $env:GITHUB_WORKSPACE "nuget-root"
           $buildNative = Join-Path $root "build\native"
-
           $includeDir = Join-Path $buildNative "include"
-
-          $binX64Dir = Join-Path $buildNative "bin\win-x64"
-          $binArm64Dir = Join-Path $buildNative "bin\win-arm64"
-
           $libX64Dir = Join-Path $buildNative "lib\win-x64"
           $libArm64Dir = Join-Path $buildNative "lib\win-arm64"
-
-          $runtimeX64Dir = Join-Path $root "runtimes\win-x64\native"
-          $runtimeArm64Dir = Join-Path $root "runtimes\win-arm64\native"
-
           $buildInfoX64Dir = Join-Path $buildNative "build-info\win-x64"
           $buildInfoArm64Dir = Join-Path $buildNative "build-info\win-arm64"
 
@@ -607,29 +362,15 @@ jobs:
           }
 
           New-Item -ItemType Directory -Force -Path $includeDir | Out-Null
-
-          New-Item -ItemType Directory -Force -Path $binX64Dir | Out-Null
-          New-Item -ItemType Directory -Force -Path $binArm64Dir | Out-Null
-
           New-Item -ItemType Directory -Force -Path $libX64Dir | Out-Null
           New-Item -ItemType Directory -Force -Path $libArm64Dir | Out-Null
-
-          New-Item -ItemType Directory -Force -Path $runtimeX64Dir | Out-Null
-          New-Item -ItemType Directory -Force -Path $runtimeArm64Dir | Out-Null
-
           New-Item -ItemType Directory -Force -Path $buildInfoX64Dir | Out-Null
           New-Item -ItemType Directory -Force -Path $buildInfoArm64Dir | Out-Null
 
           Copy-Item "$x64\include\*" $includeDir -Recurse -Force
 
-          Copy-Item "$x64\bin\win-x64\$env:PACKAGE_ID.dll" "$binX64Dir\$env:PACKAGE_ID.dll" -Force
-          Copy-Item "$arm64\bin\win-arm64\$env:PACKAGE_ID.dll" "$binArm64Dir\$env:PACKAGE_ID.dll" -Force
-
-          Copy-Item "$x64\lib\win-x64\$env:PACKAGE_ID.lib" "$libX64Dir\$env:PACKAGE_ID.lib" -Force
-          Copy-Item "$arm64\lib\win-arm64\$env:PACKAGE_ID.lib" "$libArm64Dir\$env:PACKAGE_ID.lib" -Force
-
-          Copy-Item "$x64\bin\win-x64\$env:PACKAGE_ID.dll" "$runtimeX64Dir\$env:PACKAGE_ID.dll" -Force
-          Copy-Item "$arm64\bin\win-arm64\$env:PACKAGE_ID.dll" "$runtimeArm64Dir\$env:PACKAGE_ID.dll" -Force
+          Copy-Item "$x64\lib\win-x64\v8_monolith.lib" "$libX64Dir\v8_monolith.lib" -Force
+          Copy-Item "$arm64\lib\win-arm64\v8_monolith.lib" "$libArm64Dir\v8_monolith.lib" -Force
 
           Copy-Item "$x64\build-info\win-x64\*" $buildInfoX64Dir -Recurse -Force
           Copy-Item "$arm64\build-info\win-arm64\*" $buildInfoArm64Dir -Recurse -Force
@@ -640,7 +381,7 @@ jobs:
             '  <ItemDefinitionGroup>',
             '    <ClCompile>',
             '      <LanguageStandard>stdcpp20</LanguageStandard>',
-            '      <PreprocessorDefinitions>USING_V8_SHARED;V8_GN_HEADER;%(PreprocessorDefinitions)</PreprocessorDefinitions>',
+            '      <PreprocessorDefinitions>V8_GN_HEADER;%(PreprocessorDefinitions)</PreprocessorDefinitions>',
             '      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>',
             '    </ClCompile>',
             '  </ItemDefinitionGroup>',
@@ -671,30 +412,16 @@ jobs:
             '  <ItemDefinitionGroup Condition="''$(_XScriptV8Rid)'' == ''win-x64''">',
             '    <Link>',
             '      <AdditionalLibraryDirectories>$(MSBuildThisFileDirectory)lib\win-x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>',
-            '      <AdditionalDependencies>X.Script.V8.lib;%(AdditionalDependencies)</AdditionalDependencies>',
+            '      <AdditionalDependencies>v8_monolith.lib;winmm.lib;dbghelp.lib;shlwapi.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>',
             '    </Link>',
             '  </ItemDefinitionGroup>',
-            '',
-            '  <ItemGroup Condition="''$(_XScriptV8Rid)'' == ''win-x64''">',
-            '    <None Include="$(MSBuildThisFileDirectory)bin\win-x64\X.Script.V8.dll">',
-            '      <Link>X.Script.V8.dll</Link>',
-            '      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>',
-            '    </None>',
-            '  </ItemGroup>',
             '',
             '  <ItemDefinitionGroup Condition="''$(_XScriptV8Rid)'' == ''win-arm64''">',
             '    <Link>',
             '      <AdditionalLibraryDirectories>$(MSBuildThisFileDirectory)lib\win-arm64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>',
-            '      <AdditionalDependencies>X.Script.V8.lib;%(AdditionalDependencies)</AdditionalDependencies>',
+            '      <AdditionalDependencies>v8_monolith.lib;winmm.lib;dbghelp.lib;shlwapi.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>',
             '    </Link>',
             '  </ItemDefinitionGroup>',
-            '',
-            '  <ItemGroup Condition="''$(_XScriptV8Rid)'' == ''win-arm64''">',
-            '    <None Include="$(MSBuildThisFileDirectory)bin\win-arm64\X.Script.V8.dll">',
-            '      <Link>X.Script.V8.dll</Link>',
-            '      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>',
-            '    </None>',
-            '  </ItemGroup>',
             '</Project>'
           )
 
@@ -710,8 +437,8 @@ jobs:
             '    <authors>X.Script</authors>',
             '    <owners>X.Script</owners>',
             '    <requireLicenseAcceptance>false</requireLicenseAcceptance>',
-            '    <description>V8 native Windows x64 and ARM64 dynamic libraries, import libraries, and headers for X.Script. Built from v8_monolith with static dependencies where possible.</description>',
-            '    <tags>v8 native javascript win-x64 win-arm64 clangcl msvc dll dynamic-library import-library</tags>',
+            '    <description>V8 native Windows x64 and ARM64 Release static libraries and headers for X.Script.</description>',
+            '    <tags>v8 native javascript win-x64 win-arm64 clangcl msvc static-library</tags>',
             ('    <repository type="git" url="https://chromium.googlesource.com/v8/v8.git" commit="{0}" />' -f $env:V8_REF),
             '  </metadata>',
             '</package>'
@@ -747,7 +474,7 @@ jobs:
 
           Push-Location $root
           try {
-            Compress-Archive -Path "$env:PACKAGE_ID.nuspec", "build", "runtimes" -DestinationPath $nupkg -Force
+            Compress-Archive -Path "$env:PACKAGE_ID.nuspec", "build" -DestinationPath $nupkg -Force
           } finally {
             Pop-Location
           }
@@ -769,24 +496,12 @@ jobs:
             "build/native/include/v8.h",
             "build/native/include/v8-gn.h",
             "build/native/include/libplatform/libplatform.h",
-
-            "build/native/lib/win-x64/$env:PACKAGE_ID.lib",
-            "build/native/bin/win-x64/$env:PACKAGE_ID.dll",
-            "runtimes/win-x64/native/$env:PACKAGE_ID.dll",
-
-            "build/native/lib/win-arm64/$env:PACKAGE_ID.lib",
-            "build/native/bin/win-arm64/$env:PACKAGE_ID.dll",
-            "runtimes/win-arm64/native/$env:PACKAGE_ID.dll",
-
+            "build/native/lib/win-x64/v8_monolith.lib",
+            "build/native/lib/win-arm64/v8_monolith.lib",
             "build/native/build-info/win-x64/args.gn",
             "build/native/build-info/win-x64/args.full.txt",
-            "build/native/build-info/win-x64/$env:PACKAGE_ID.def",
-            "build/native/build-info/win-x64/dependents.txt",
-
             "build/native/build-info/win-arm64/args.gn",
-            "build/native/build-info/win-arm64/args.full.txt",
-            "build/native/build-info/win-arm64/$env:PACKAGE_ID.def",
-            "build/native/build-info/win-arm64/dependents.txt"
+            "build/native/build-info/win-arm64/args.full.txt"
           )
 
           $zip = [System.IO.Compression.ZipFile]::OpenRead($env:NUPKG)
@@ -810,7 +525,7 @@ jobs:
             $zip.Dispose()
           }
 
-      - name: Native C++ DLL smoke test x64 from packed NuGet
+      - name: PackageReference smoke test x64
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -844,39 +559,24 @@ jobs:
               }
           }
 
-          $testDir = Join-Path $env:GITHUB_WORKSPACE "smoke-test-x64"
-          $extractDir = Join-Path $testDir "package"
-          $main = Join-Path $testDir "main.cc"
-          $exe = Join-Path $testDir "v8-smoke-x64.exe"
+          $pkgDir = Join-Path $env:GITHUB_WORKSPACE "local-nuget-source"
+          $testDir = Join-Path $env:GITHUB_WORKSPACE "smoke-vcxproj-x64"
+
+          if (Test-Path $pkgDir) {
+            Remove-Item $pkgDir -Recurse -Force
+          }
 
           if (Test-Path $testDir) {
             Remove-Item $testDir -Recurse -Force
           }
 
+          New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
           New-Item -ItemType Directory -Force -Path $testDir | Out-Null
-          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
 
-          Expand-Archive -Path $env:NUPKG -DestinationPath $extractDir -Force
+          Copy-Item $env:NUPKG $pkgDir -Force
 
-          $native = Join-Path $extractDir "build\native"
-          $includeDir = Join-Path $native "include"
-          $libDir = Join-Path $native "lib\win-x64"
-          $binDir = Join-Path $native "bin\win-x64"
-
-          $importLib = Join-Path $libDir "$env:PACKAGE_ID.lib"
-          $dll = Join-Path $binDir "$env:PACKAGE_ID.dll"
-
-          if (!(Test-Path $includeDir)) {
-            throw "Missing include dir from nupkg: $includeDir"
-          }
-
-          if (!(Test-Path $importLib)) {
-            throw "Missing x64 import lib from nupkg: $importLib"
-          }
-
-          if (!(Test-Path $dll)) {
-            throw "Missing x64 DLL from nupkg: $dll"
-          }
+          $main = Join-Path $testDir "main.cc"
+          $vcxproj = Join-Path $testDir "SmokeV8.vcxproj"
 
           @'
           #include <v8.h>
@@ -893,44 +593,84 @@ jobs:
           }
           '@ | Set-Content -Path $main -Encoding UTF8
 
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-
-          if (-not $vsPath) {
-            throw "Visual Studio with VC tools not found"
-          }
-
-          $devcmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
-
-          $buildCmd = Join-Path $testDir "build-x64.cmd"
-
           @"
-          @echo off
-          call "$devcmd" -arch=x64 -host_arch=x64
-          if errorlevel 1 exit /b 1
+          <?xml version="1.0" encoding="utf-8"?>
+          <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+            <ItemGroup Label="ProjectConfigurations">
+              <ProjectConfiguration Include="Release|x64">
+                <Configuration>Release</Configuration>
+                <Platform>x64</Platform>
+              </ProjectConfiguration>
+            </ItemGroup>
 
-          clang-cl /nologo /std:c++20 /EHsc /MT /O2 /DNDEBUG /DUSING_V8_SHARED /DV8_GN_HEADER /I "$includeDir" "$main" /link /LIBPATH:"$libDir" X.Script.V8.lib /OUT:"$exe"
-          if errorlevel 1 exit /b 1
-          "@ | Set-Content -Path $buildCmd -Encoding ASCII
+            <PropertyGroup Label="Globals">
+              <VCProjectVersion>17.0</VCProjectVersion>
+              <Keyword>Win32Proj</Keyword>
+              <ProjectGuid>{D3B9718D-7E20-4F94-BE07-92E2D02C3F01}</ProjectGuid>
+              <RootNamespace>SmokeV8</RootNamespace>
+              <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+              <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
+            </PropertyGroup>
 
-          & cmd.exe /c "`"$buildCmd`""
+            <Import Project="`$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+            <PropertyGroup Condition="'`$(Configuration)|`$(Platform)'=='Release|x64'" Label="Configuration">
+              <ConfigurationType>Application</ConfigurationType>
+              <UseDebugLibraries>false</UseDebugLibraries>
+              <PlatformToolset>v143</PlatformToolset>
+              <WholeProgramOptimization>true</WholeProgramOptimization>
+              <CharacterSet>Unicode</CharacterSet>
+            </PropertyGroup>
+
+            <Import Project="`$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+            <ItemDefinitionGroup Condition="'`$(Configuration)|`$(Platform)'=='Release|x64'">
+              <ClCompile>
+                <WarningLevel>Level3</WarningLevel>
+                <Optimization>MaxSpeed</Optimization>
+              </ClCompile>
+            </ItemDefinitionGroup>
+
+            <ItemGroup>
+              <ClCompile Include="main.cc" />
+            </ItemGroup>
+
+            <ItemGroup>
+              <PackageReference Include="$env:PACKAGE_ID" Version="$env:VERSION" />
+            </ItemGroup>
+
+            <Import Project="`$(VCTargetsPath)\Microsoft.Cpp.targets" />
+          </Project>
+          "@ | Set-Content -Path $vcxproj -Encoding UTF8
+
+          msbuild $vcxproj `
+            /restore `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:RestoreSources="$pkgDir" `
+            /p:RestoreNoCache=true `
+            /p:RestorePackagesPath="$env:NUGET_PACKAGES"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Native x64 DLL smoke test link failed with exit code $LASTEXITCODE"
+            throw "x64 PackageReference smoke build failed with exit code $LASTEXITCODE"
           }
 
-          Copy-Item $dll (Join-Path $testDir "$env:PACKAGE_ID.dll") -Force
+          $exe = Join-Path $testDir "x64\Release\SmokeV8.exe"
+
+          if (!(Test-Path $exe)) {
+            $exe = Get-ChildItem $testDir -Filter "SmokeV8.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          }
 
           Assert-PeMachine -Path $exe -Expected "0x8664"
-          Assert-PeMachine -Path (Join-Path $testDir "$env:PACKAGE_ID.dll") -Expected "0x8664"
 
           & $exe
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Native x64 DLL smoke test runtime failed with exit code $LASTEXITCODE"
+            throw "x64 PackageReference smoke runtime failed with exit code $LASTEXITCODE"
           }
 
-      - name: Native C++ DLL smoke test ARM64 from packed NuGet
+      - name: PackageReference smoke test ARM64
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -964,39 +704,24 @@ jobs:
               }
           }
 
-          $testDir = Join-Path $env:GITHUB_WORKSPACE "smoke-test-arm64"
-          $extractDir = Join-Path $testDir "package"
-          $main = Join-Path $testDir "main.cc"
-          $exe = Join-Path $testDir "v8-smoke-arm64.exe"
+          $pkgDir = Join-Path $env:GITHUB_WORKSPACE "local-nuget-source-arm64"
+          $testDir = Join-Path $env:GITHUB_WORKSPACE "smoke-vcxproj-arm64"
+
+          if (Test-Path $pkgDir) {
+            Remove-Item $pkgDir -Recurse -Force
+          }
 
           if (Test-Path $testDir) {
             Remove-Item $testDir -Recurse -Force
           }
 
+          New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
           New-Item -ItemType Directory -Force -Path $testDir | Out-Null
-          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
 
-          Expand-Archive -Path $env:NUPKG -DestinationPath $extractDir -Force
+          Copy-Item $env:NUPKG $pkgDir -Force
 
-          $native = Join-Path $extractDir "build\native"
-          $includeDir = Join-Path $native "include"
-          $libDir = Join-Path $native "lib\win-arm64"
-          $binDir = Join-Path $native "bin\win-arm64"
-
-          $importLib = Join-Path $libDir "$env:PACKAGE_ID.lib"
-          $dll = Join-Path $binDir "$env:PACKAGE_ID.dll"
-
-          if (!(Test-Path $includeDir)) {
-            throw "Missing include dir from nupkg: $includeDir"
-          }
-
-          if (!(Test-Path $importLib)) {
-            throw "Missing ARM64 import lib from nupkg: $importLib"
-          }
-
-          if (!(Test-Path $dll)) {
-            throw "Missing ARM64 DLL from nupkg: $dll"
-          }
+          $main = Join-Path $testDir "main.cc"
+          $vcxproj = Join-Path $testDir "SmokeV8.vcxproj"
 
           @'
           #include <v8.h>
@@ -1013,34 +738,76 @@ jobs:
           }
           '@ | Set-Content -Path $main -Encoding UTF8
 
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-
-          if (-not $vsPath) {
-            throw "Visual Studio with VC tools not found"
-          }
-
-          $devcmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
-
-          $buildCmd = Join-Path $testDir "build-arm64.cmd"
-
           @"
-          @echo off
-          call "$devcmd" -arch=arm64 -host_arch=x64
-          if errorlevel 1 exit /b 1
+          <?xml version="1.0" encoding="utf-8"?>
+          <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+            <ItemGroup Label="ProjectConfigurations">
+              <ProjectConfiguration Include="Release|ARM64">
+                <Configuration>Release</Configuration>
+                <Platform>ARM64</Platform>
+              </ProjectConfiguration>
+            </ItemGroup>
 
-          clang-cl --target=aarch64-pc-windows-msvc /nologo /std:c++20 /EHsc /MT /O2 /DNDEBUG /DUSING_V8_SHARED /DV8_GN_HEADER /I "$includeDir" "$main" /link /MACHINE:ARM64 /LIBPATH:"$libDir" X.Script.V8.lib /OUT:"$exe"
-          if errorlevel 1 exit /b 1
-          "@ | Set-Content -Path $buildCmd -Encoding ASCII
+            <PropertyGroup Label="Globals">
+              <VCProjectVersion>17.0</VCProjectVersion>
+              <Keyword>Win32Proj</Keyword>
+              <ProjectGuid>{75C17D61-C78B-4601-BE89-EC8E541C6C19}</ProjectGuid>
+              <RootNamespace>SmokeV8</RootNamespace>
+              <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+              <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
+            </PropertyGroup>
 
-          & cmd.exe /c "`"$buildCmd`""
+            <Import Project="`$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+            <PropertyGroup Condition="'`$(Configuration)|`$(Platform)'=='Release|ARM64'" Label="Configuration">
+              <ConfigurationType>Application</ConfigurationType>
+              <UseDebugLibraries>false</UseDebugLibraries>
+              <PlatformToolset>v143</PlatformToolset>
+              <WholeProgramOptimization>true</WholeProgramOptimization>
+              <CharacterSet>Unicode</CharacterSet>
+            </PropertyGroup>
+
+            <Import Project="`$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+            <ItemDefinitionGroup Condition="'`$(Configuration)|`$(Platform)'=='Release|ARM64'">
+              <ClCompile>
+                <WarningLevel>Level3</WarningLevel>
+                <Optimization>MaxSpeed</Optimization>
+              </ClCompile>
+            </ItemDefinitionGroup>
+
+            <ItemGroup>
+              <ClCompile Include="main.cc" />
+            </ItemGroup>
+
+            <ItemGroup>
+              <PackageReference Include="$env:PACKAGE_ID" Version="$env:VERSION" />
+            </ItemGroup>
+
+            <Import Project="`$(VCTargetsPath)\Microsoft.Cpp.targets" />
+          </Project>
+          "@ | Set-Content -Path $vcxproj -Encoding UTF8
+
+          msbuild $vcxproj `
+            /restore `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=ARM64 `
+            /p:RestoreSources="$pkgDir" `
+            /p:RestoreNoCache=true `
+            /p:RestorePackagesPath="$env:NUGET_PACKAGES"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Native ARM64 DLL smoke test link failed with exit code $LASTEXITCODE"
+            throw "ARM64 PackageReference smoke build failed with exit code $LASTEXITCODE"
+          }
+
+          $exe = Join-Path $testDir "ARM64\Release\SmokeV8.exe"
+
+          if (!(Test-Path $exe)) {
+            $exe = Get-ChildItem $testDir -Filter "SmokeV8.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
           }
 
           Assert-PeMachine -Path $exe -Expected "0xAA64"
-          Assert-PeMachine -Path $dll -Expected "0xAA64"
 
       - name: Upload NuGet artifact
         uses: actions/upload-artifact@v4
