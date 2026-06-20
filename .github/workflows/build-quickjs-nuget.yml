@@ -36,6 +36,9 @@ jobs:
     name: Build QuickJS Windows x64/ARM64 NuGet
     runs-on: ubuntu-latest
 
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+
     env:
       PACKAGE_ID: X.Script.QuickJS
       QUICKJS_REPO: https://github.com/bellard/quickjs.git
@@ -45,6 +48,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Resolve version and refs
+        id: resolve
         shell: bash
         run: |
           set -euo pipefail
@@ -73,6 +77,8 @@ jobs:
           echo "QUICKJS_SOURCE_DIR=$QUICKJS_SOURCE_DIR" >> "$GITHUB_ENV"
           echo "LLVM_MINGW_DIR=$LLVM_MINGW_DIR" >> "$GITHUB_ENV"
 
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
           echo "VERSION=$VERSION"
           echo "QUICKJS_REF=$QUICKJS_REF"
           echo "LLVM_MINGW_VERSION=$LLVM_MINGW_VERSION"
@@ -94,11 +100,6 @@ jobs:
             zip \
             unzip \
             file
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "9.0.x"
 
       - name: Install LLVM-MinGW
         shell: bash
@@ -145,6 +146,9 @@ jobs:
           git rev-parse HEAD
           git log -1 --oneline
 
+          echo "CONFIG_ATOMICS usage:"
+          grep -n "CONFIG_ATOMICS" quickjs.c || true
+
       - name: Validate QuickJS source files
         shell: bash
         run: |
@@ -170,7 +174,7 @@ jobs:
             fi
           done
 
-      - name: Build QuickJS DLL and MSVC import libraries
+      - name: Build QuickJS DLL and import libraries
         shell: bash
         run: |
           set -euo pipefail
@@ -268,12 +272,27 @@ jobs:
             echo "Creating static LLVM-MinGW archive for $rid..."
             "$ar" rcs "$lib_dir/$STATIC_A_NAME" "${objects[@]}"
 
+            echo "Resolving static winpthread for $rid..."
+            local winpthread_static
+            winpthread_static="$($cc -print-file-name=libwinpthread.a || true)"
+
+            if [ -z "$winpthread_static" ] || [ ! -f "$winpthread_static" ]; then
+              echo "Static libwinpthread.a not found for $rid."
+              echo "Do not fall back to libwinpthread.dll.a here, otherwise runtime may load the wrong architecture libwinpthread-1.dll."
+              exit 1
+            fi
+
+            echo "Using static winpthread: $winpthread_static"
+
             echo "Creating QuickJS DLL for $rid..."
             "$cc" \
               -shared \
               -o "$bin_dir/$DLL_NAME" \
               "${objects[@]}" \
+              "$winpthread_static" \
+              -Wl,--no-undefined \
               -Wl,--export-all-symbols \
+              -Wl,--exclude-libs,ALL \
               -Wl,--out-implib,"$lib_dir/$GNU_IMPLIB_NAME" \
               -Wl,--output-def,"$lib_dir/$DEF_NAME"
 
@@ -285,6 +304,14 @@ jobs:
             echo "Checking PE machine for $rid..."
             "$readobj" --file-headers "$bin_dir/$DLL_NAME" | tee "$build_dir/headers.txt"
             grep -q "$expected_machine" "$build_dir/headers.txt"
+
+            echo "Checking DLL imports for $rid..."
+            "$readobj" --coff-imports "$bin_dir/$DLL_NAME" | tee "$build_dir/imports.txt" || true
+
+            if grep -Eiq "libwinpthread-1\.dll|winpthread" "$build_dir/imports.txt"; then
+              echo "Unexpected dynamic winpthread dependency found in $rid DLL."
+              exit 1
+            fi
 
             echo "Creating MSVC import library for $rid..."
             "$dlltool" \
@@ -422,6 +449,89 @@ jobs:
           echo "Package content:"
           unzip -l "$NUPKG"
 
+      - name: Smoke test native C link from packed NuGet
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SMOKE_ROOT="$WORK_DIR/smoke-native-link"
+          EXTRACTED="$SMOKE_ROOT/extracted"
+          SMOKE_C="$SMOKE_ROOT/smoke.c"
+
+          rm -rf "$SMOKE_ROOT"
+          mkdir -p "$EXTRACTED"
+
+          unzip -q "$NUPKG" -d "$EXTRACTED"
+
+          cat > "$SMOKE_C" <<'EOF'
+          #include <stddef.h>
+          #include "quickjs.h"
+
+          int main(void) {
+              JSRuntime *rt = JS_NewRuntime();
+              if (!rt) {
+                  return 10;
+              }
+
+              JSContext *ctx = JS_NewContext(rt);
+              if (!ctx) {
+                  JS_FreeRuntime(rt);
+                  return 11;
+              }
+
+              JSValue value = JS_Eval(ctx, "1+1", 3, "<smoke>", JS_EVAL_TYPE_GLOBAL);
+              JS_FreeValue(ctx, value);
+
+              JS_FreeContext(ctx);
+              JS_FreeRuntime(rt);
+              return 0;
+          }
+          EOF
+
+          test_link_one() {
+            local rid="$1"
+            local triple="$2"
+            local expected_machine="$3"
+            local import_lib_name="$4"
+            local test_name="$5"
+
+            local cc="$LLVM_MINGW_DIR/bin/${triple}-clang"
+            local readobj="$LLVM_MINGW_DIR/bin/llvm-readobj"
+
+            local include_dir="$EXTRACTED/build/native/include"
+            local lib_path="$EXTRACTED/build/native/lib/$rid/$import_lib_name"
+            local out_dir="$SMOKE_ROOT/$rid/$test_name"
+            local exe="$out_dir/smoke.exe"
+
+            mkdir -p "$out_dir"
+
+            echo "Testing native link: rid=$rid import_lib=$import_lib_name"
+
+            test -f "$include_dir/quickjs.h"
+            test -f "$lib_path"
+            test -f "$EXTRACTED/runtimes/$rid/native/$PACKAGE_ID.dll"
+
+            "$cc" \
+              "$SMOKE_C" \
+              -I"$include_dir" \
+              "$lib_path" \
+              -o "$exe"
+
+            "$readobj" --file-headers "$exe" | tee "$out_dir/headers.txt"
+            grep -q "$expected_machine" "$out_dir/headers.txt"
+
+            "$readobj" --coff-imports "$exe" | tee "$out_dir/imports.txt"
+            grep -q "$PACKAGE_ID.dll" "$out_dir/imports.txt"
+          }
+
+          test_link_one "win-x64" "x86_64-w64-mingw32" "IMAGE_FILE_MACHINE_AMD64" "$PACKAGE_ID.lib" "msvc-import-lib"
+          test_link_one "win-x64" "x86_64-w64-mingw32" "IMAGE_FILE_MACHINE_AMD64" "lib$PACKAGE_ID.dll.a" "gnu-import-lib"
+
+          test_link_one "win-arm64" "aarch64-w64-mingw32" "IMAGE_FILE_MACHINE_ARM64" "$PACKAGE_ID.lib" "msvc-import-lib"
+          test_link_one "win-arm64" "aarch64-w64-mingw32" "IMAGE_FILE_MACHINE_ARM64" "lib$PACKAGE_ID.dll.a" "gnu-import-lib"
+
+          echo "Native C link smoke tests passed."
+
       - name: Verify NuGet content
         shell: bash
         run: |
@@ -436,9 +546,11 @@ jobs:
           unzip -l "$NUPKG" | grep "build/native/include/quickjs.h"
 
           unzip -l "$NUPKG" | grep "build/native/lib/win-x64/$PACKAGE_ID.lib"
+          unzip -l "$NUPKG" | grep "build/native/lib/win-x64/lib$PACKAGE_ID.dll.a"
           unzip -l "$NUPKG" | grep "build/native/bin/win-x64/$PACKAGE_ID.dll"
 
           unzip -l "$NUPKG" | grep "build/native/lib/win-arm64/$PACKAGE_ID.lib"
+          unzip -l "$NUPKG" | grep "build/native/lib/win-arm64/lib$PACKAGE_ID.dll.a"
           unzip -l "$NUPKG" | grep "build/native/bin/win-arm64/$PACKAGE_ID.dll"
 
           unzip -l "$NUPKG" | grep "runtimes/win-x64/native/$PACKAGE_ID.dll"
@@ -457,10 +569,189 @@ jobs:
           path: ${{ env.NUPKG }}
           if-no-files-found: error
 
+  smoke-windows:
+    name: Smoke test NuGet on Windows
+    runs-on: windows-latest
+    needs: build
+
+    env:
+      PACKAGE_ID: X.Script.QuickJS
+      VERSION: ${{ needs.build.outputs.version }}
+      NUGET_PACKAGES: ${{ github.workspace }}\.nuget-packages
+
+    steps:
+      - name: Download NuGet artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: X.Script.QuickJS-${{ needs.build.outputs.version }}
+          path: nupkg
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Create and run PInvoke smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Get-PeMachineHex {
+              param(
+                  [Parameter(Mandatory = $true)]
+                  [string] $Path
+              )
+
+              $bytes = [System.IO.File]::ReadAllBytes($Path)
+              $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+              $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+
+              return "0x{0:X4}" -f $machine
+          }
+
+          function Assert-PeMachine {
+              param(
+                  [Parameter(Mandatory = $true)]
+                  [string] $Path,
+
+                  [Parameter(Mandatory = $true)]
+                  [string] $Expected
+              )
+
+              if (!(Test-Path $Path)) {
+                  throw "Missing PE file: $Path"
+              }
+
+              $actual = Get-PeMachineHex -Path $Path
+              Write-Host "$Path -> $actual"
+
+              if ($actual -ne $Expected) {
+                  throw "PE machine mismatch. Expected $Expected, got $actual. File: $Path"
+              }
+          }
+
+          $pkgDir = Resolve-Path "$env:GITHUB_WORKSPACE\nupkg"
+
+          Get-ChildItem $pkgDir -Recurse
+
+          $workDir = Join-Path $env:GITHUB_WORKSPACE "smoke-dotnet"
+          Remove-Item -Recurse -Force $workDir -ErrorAction SilentlyContinue
+
+          dotnet new console --framework net9.0 --name SmokeDotNet --output $workDir
+
+          Push-Location $workDir
+
+          dotnet add package $env:PACKAGE_ID `
+            --version $env:VERSION `
+            --source $pkgDir
+
+          @'
+          using System;
+          using System.Runtime.InteropServices;
+
+          internal static class Native
+          {
+              [DllImport("X.Script.QuickJS", CallingConvention = CallingConvention.Cdecl)]
+              internal static extern IntPtr JS_NewRuntime();
+
+              [DllImport("X.Script.QuickJS", CallingConvention = CallingConvention.Cdecl)]
+              internal static extern void JS_FreeRuntime(IntPtr rt);
+
+              [DllImport("X.Script.QuickJS", CallingConvention = CallingConvention.Cdecl)]
+              internal static extern IntPtr JS_NewContext(IntPtr rt);
+
+              [DllImport("X.Script.QuickJS", CallingConvention = CallingConvention.Cdecl)]
+              internal static extern void JS_FreeContext(IntPtr ctx);
+          }
+
+          IntPtr rt = Native.JS_NewRuntime();
+          if (rt == IntPtr.Zero)
+          {
+              Console.Error.WriteLine("JS_NewRuntime returned null.");
+              Environment.Exit(10);
+          }
+
+          IntPtr ctx = Native.JS_NewContext(rt);
+          if (ctx == IntPtr.Zero)
+          {
+              Native.JS_FreeRuntime(rt);
+              Console.Error.WriteLine("JS_NewContext returned null.");
+              Environment.Exit(11);
+          }
+
+          Native.JS_FreeContext(ctx);
+          Native.JS_FreeRuntime(rt);
+
+          Console.WriteLine("QuickJS native PInvoke smoke test passed.");
+          '@ | Set-Content -Path Program.cs -Encoding UTF8
+
+          dotnet restore
+
+          $publishX64 = Join-Path $workDir "publish-win-x64"
+          $publishArm64 = Join-Path $workDir "publish-win-arm64"
+
+          dotnet publish .\SmokeDotNet.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained false `
+            -o $publishX64
+
+          $dllName = "$($env:PACKAGE_ID).dll"
+          $x64Dll = Join-Path $publishX64 $dllName
+
+          Get-ChildItem $publishX64
+          Assert-PeMachine -Path $x64Dll -Expected "0x8664"
+
+          & (Join-Path $publishX64 "SmokeDotNet.exe")
+
+          dotnet publish .\SmokeDotNet.csproj `
+            -c Release `
+            -r win-arm64 `
+            --self-contained false `
+            -o $publishArm64
+
+          $arm64Dll = Join-Path $publishArm64 $dllName
+
+          Get-ChildItem $publishArm64
+          Assert-PeMachine -Path $arm64Dll -Expected "0xAA64"
+
+          Pop-Location
+
+          Write-Host "Windows NuGet smoke tests passed."
+
+  publish:
+    name: Publish to NuGet.org
+    runs-on: ubuntu-latest
+    needs:
+      - build
+      - smoke-windows
+
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
+
+    steps:
+      - name: Download NuGet artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: X.Script.QuickJS-${{ needs.build.outputs.version }}
+          path: nupkg
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
       - name: Publish to NuGet.org
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
         shell: bash
         run: |
+          set -euo pipefail
+
+          NUPKG="$(find nupkg -name '*.nupkg' -type f | head -n 1)"
+
+          if [ -z "$NUPKG" ]; then
+            echo "No .nupkg found."
+            exit 1
+          fi
+
           dotnet nuget push "$NUPKG" \
             --source "https://api.nuget.org/v3/index.json" \
             --api-key "${{ secrets.NUGET_API_KEY }}" \
