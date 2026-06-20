@@ -411,6 +411,8 @@ jobs:
 
           cd "$NUPKG_ROOT"
 
+          nuget push "$NUPKG" -ApiKey ${{ secrets.NUGET_API_KEY }} -source nuget.org
+
           zip -r "$NUPKG" \
             "$PACKAGE_ID.nuspec" \
             build

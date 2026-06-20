@@ -435,6 +435,8 @@ jobs:
           "NUPKG=$nupkg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "NUPKG=$nupkg"
 
+          nuget push "$NUPKG" -ApiKey ${{ secrets.NUGET_API_KEY }} -source nuget.org
+
       - name: Verify NuGet content
         shell: pwsh
         run: |
