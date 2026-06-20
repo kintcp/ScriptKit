@@ -16,7 +16,7 @@ on:
         required: true
         default: "20260616"
       publish:
-        description: "Publish to GitHub Packages"
+        description: "Publish to NuGet.org"
         required: true
         default: "false"
         type: choice
@@ -30,7 +30,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build:
@@ -96,6 +95,11 @@ jobs:
             unzip \
             file
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
       - name: Install LLVM-MinGW
         shell: bash
         run: |
@@ -117,7 +121,8 @@ jobs:
 
           "$LLVM_MINGW_DIR/bin/x86_64-w64-mingw32-clang" --version
           "$LLVM_MINGW_DIR/bin/aarch64-w64-mingw32-clang" --version
-          # "$LLVM_MINGW_DIR/bin/llvm-dlltool" --version
+          "$LLVM_MINGW_DIR/bin/llvm-dlltool" --version
+          "$LLVM_MINGW_DIR/bin/llvm-readobj" --version
 
       - name: Clone official QuickJS
         shell: bash
@@ -190,8 +195,6 @@ jobs:
 
           header_files=(
             quickjs.h
-            quickjs-libc.h
-            quickjs-atom.h
             cutils.h
             libregexp.h
             libunicode.h
@@ -216,17 +219,20 @@ jobs:
             local rid="$1"
             local triple="$2"
             local dlltool_machine="$3"
+            local expected_machine="$4"
 
             local cc="$LLVM_MINGW_DIR/bin/${triple}-clang"
             local ar="$LLVM_MINGW_DIR/bin/${triple}-ar"
             local strip="$LLVM_MINGW_DIR/bin/${triple}-strip"
             local dlltool="$LLVM_MINGW_DIR/bin/llvm-dlltool"
+            local readobj="$LLVM_MINGW_DIR/bin/llvm-readobj"
 
             local build_dir="$BUILD_ROOT/$rid"
             local bin_dir="$PKG_ROOT/build/native/bin/$rid"
             local lib_dir="$PKG_ROOT/build/native/lib/$rid"
+            local runtime_native_dir="$PKG_ROOT/runtimes/$rid/native"
 
-            mkdir -p "$build_dir" "$bin_dir" "$lib_dir"
+            mkdir -p "$build_dir" "$bin_dir" "$lib_dir" "$runtime_native_dir"
 
             local cflags=(
               -O2
@@ -270,10 +276,16 @@ jobs:
               "${objects[@]}" \
               -Wl,--export-all-symbols \
               -Wl,--out-implib,"$lib_dir/$GNU_IMPLIB_NAME" \
-              -Wl,--output-def,"$lib_dir/$DEF_NAME" \
-              -lwinpthread
+              -Wl,--output-def,"$lib_dir/$DEF_NAME"
 
             "$strip" "$bin_dir/$DLL_NAME"
+
+            echo "Copying runtime native DLL for $rid..."
+            cp "$bin_dir/$DLL_NAME" "$runtime_native_dir/$DLL_NAME"
+
+            echo "Checking PE machine for $rid..."
+            "$readobj" --file-headers "$bin_dir/$DLL_NAME" | tee "$build_dir/headers.txt"
+            grep -q "$expected_machine" "$build_dir/headers.txt"
 
             echo "Creating MSVC import library for $rid..."
             "$dlltool" \
@@ -282,23 +294,19 @@ jobs:
               -d "$lib_dir/$DEF_NAME" \
               -l "$lib_dir/$LIB_NAME"
 
-            echo "Copying libwinpthread-1.dll for $rid if present..."
-            local winpthread_dll
-            winpthread_dll="$($cc -print-file-name=libwinpthread-1.dll || true)"
-
-            if [ -n "$winpthread_dll" ] && [ -f "$winpthread_dll" ]; then
-              cp "$winpthread_dll" "$bin_dir/libwinpthread-1.dll"
-            else
-              echo "Warning: libwinpthread-1.dll not found for $rid via $cc -print-file-name"
-            fi
-
             echo "Built $rid files:"
-            find "$PKG_ROOT/build/native/bin/$rid" "$PKG_ROOT/build/native/lib/$rid" -type f | sort
+            find \
+              "$PKG_ROOT/build/native/bin/$rid" \
+              "$PKG_ROOT/build/native/lib/$rid" \
+              "$PKG_ROOT/runtimes/$rid/native" \
+              -type f | sort
+
             file "$bin_dir/$DLL_NAME" || true
+            file "$runtime_native_dir/$DLL_NAME" || true
           }
 
-          build_one "win-x64" "x86_64-w64-mingw32" "i386:x86-64"
-          build_one "win-arm64" "aarch64-w64-mingw32" "arm64"
+          build_one "win-x64" "x86_64-w64-mingw32" "i386:x86-64" "IMAGE_FILE_MACHINE_AMD64"
+          build_one "win-arm64" "aarch64-w64-mingw32" "arm64" "IMAGE_FILE_MACHINE_ARM64"
 
           echo "Package files:"
           find "$PKG_ROOT" -type f | sort
@@ -339,11 +347,6 @@ jobs:
                 <Link>$PACKAGE_ID.dll</Link>
                 <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
               </None>
-
-              <None Include="\$(MSBuildThisFileDirectory)bin\\win-x64\\libwinpthread-1.dll" Condition="Exists('\$(MSBuildThisFileDirectory)bin\\win-x64\\libwinpthread-1.dll')">
-                <Link>libwinpthread-1.dll</Link>
-                <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-              </None>
             </ItemGroup>
 
             <ItemDefinitionGroup Condition="'\$(Platform)' == 'ARM64'">
@@ -356,11 +359,6 @@ jobs:
             <ItemGroup Condition="'\$(Platform)' == 'ARM64'">
               <None Include="\$(MSBuildThisFileDirectory)bin\\win-arm64\\$PACKAGE_ID.dll">
                 <Link>$PACKAGE_ID.dll</Link>
-                <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-              </None>
-
-              <None Include="\$(MSBuildThisFileDirectory)bin\\win-arm64\\libwinpthread-1.dll" Condition="Exists('\$(MSBuildThisFileDirectory)bin\\win-arm64\\libwinpthread-1.dll')">
-                <Link>libwinpthread-1.dll</Link>
                 <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
               </None>
             </ItemGroup>
@@ -408,12 +406,14 @@ jobs:
 
           cp "$WORK_DIR/$PACKAGE_ID.nuspec" "$NUPKG_ROOT/$PACKAGE_ID.nuspec"
           cp -R "$WORK_DIR/package/build" "$NUPKG_ROOT/build"
+          cp -R "$WORK_DIR/package/runtimes" "$NUPKG_ROOT/runtimes"
 
           cd "$NUPKG_ROOT"
 
           zip -r "$NUPKG" \
             "$PACKAGE_ID.nuspec" \
-            build
+            build \
+            runtimes
 
           echo "NUPKG=$NUPKG" >> "$GITHUB_ENV"
 
@@ -442,6 +442,15 @@ jobs:
           unzip -l "$NUPKG" | grep "build/native/lib/win-arm64/$PACKAGE_ID.lib"
           unzip -l "$NUPKG" | grep "build/native/bin/win-arm64/$PACKAGE_ID.dll"
 
+          unzip -l "$NUPKG" | grep "runtimes/win-x64/native/$PACKAGE_ID.dll"
+          unzip -l "$NUPKG" | grep "runtimes/win-arm64/native/$PACKAGE_ID.dll"
+
+          echo "Checking that libwinpthread-1.dll is not packaged..."
+          if unzip -l "$NUPKG" | grep -q "libwinpthread-1.dll"; then
+            echo "libwinpthread-1.dll should not be packaged."
+            exit 1
+          fi
+
       - name: Upload NuGet artifact
         uses: actions/upload-artifact@v4
         with:
@@ -449,11 +458,11 @@ jobs:
           path: ${{ env.NUPKG }}
           if-no-files-found: error
 
-      - name: Publish to GitHub Packages
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true'
+      - name: Publish to NuGet.org
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
         shell: bash
         run: |
           dotnet nuget push "$NUPKG" \
-            --source "nuget.org" \
+            --source "https://api.nuget.org/v3/index.json" \
             --api-key "${{ secrets.NUGET_API_KEY }}" \
             --skip-duplicate
