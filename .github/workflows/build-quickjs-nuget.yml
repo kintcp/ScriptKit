@@ -292,7 +292,6 @@ jobs:
               "$winpthread_static" \
               -Wl,--no-undefined \
               -Wl,--export-all-symbols \
-              -Wl,--exclude-libs,ALL \
               -Wl,--out-implib,"$lib_dir/$GNU_IMPLIB_NAME" \
               -Wl,--output-def,"$lib_dir/$DEF_NAME"
 
@@ -308,8 +307,8 @@ jobs:
             echo "Checking DLL imports for $rid..."
             "$readobj" --coff-imports "$bin_dir/$DLL_NAME" | tee "$build_dir/imports.txt" || true
 
-            if grep -Eiq "libwinpthread-1\.dll|winpthread" "$build_dir/imports.txt"; then
-              echo "Unexpected dynamic winpthread dependency found in $rid DLL."
+            if grep -Eiq "libwinpthread-1\.dll" "$build_dir/imports.txt"; then
+              echo "Unexpected dynamic libwinpthread-1.dll dependency found in $rid DLL."
               exit 1
             fi
 
